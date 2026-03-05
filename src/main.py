@@ -24,6 +24,12 @@ _MAX_LOGIN_ATTEMPTS = 3
 
 
 async def run():
+    # .env 파일이 없으면 빈 파일 생성 (볼륨 마운트 후 디렉토리가 생성되는 것 방지)
+    from pathlib import Path
+    env_path = Path(__file__).parent.parent / ".env"
+    if not env_path.exists():
+        env_path.touch()
+
     # ── 1. 인증 ──────────────────────────────────────────────────
     scraper: Optional[CourseScraper] = None
 

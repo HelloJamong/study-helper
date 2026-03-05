@@ -11,6 +11,9 @@ services:
       - .env
 
     volumes:
+      # .env 파일 마운트 — save_credentials() 저장 내용이 호스트에 영속화됨
+      - ./.env:/app/.env
+
       # 소스 코드 실시간 반영 — 변경 시 재빌드 불필요
       - ./src:/app/src
 
