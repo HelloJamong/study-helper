@@ -1,9 +1,5 @@
-# Claude
-CLAUDE.md
-
 # CI/CD — 프로젝트 완성 후 배포 준비 시 제거
 .github/
-docker-compose.release.yml
 
 # Environment & secrets
 .env

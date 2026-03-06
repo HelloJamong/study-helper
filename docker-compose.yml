@@ -3,6 +3,11 @@ services:
     build: .
     image: study-helper:latest
 
+    # ── Docker Hub 릴리즈 사용 시 위 두 줄을 아래로 교체 ──────────────
+    # image: DOCKERHUB_USERNAME/study-helper:latest
+    # (build: 줄 제거 — 로컬 빌드 없이 Hub에서 pull)
+    # ──────────────────────────────────────────────────────────────────
+
     # CUI 인터랙션을 위한 터미널 연결
     stdin_open: true
     tty: true
@@ -18,7 +23,9 @@ services:
       - ./.secret_key:/app/.secret_key
 
       # 소스 코드 실시간 반영 — 변경 시 재빌드 불필요
+      # ── Docker Hub 릴리즈 사용 시 아래 줄 제거 ──────────────────────
       - ./src:/app/src
+      # ──────────────────────────────────────────────────────────────────
 
       # 다운로드 파일 (영상, 음성, 텍스트, 요약) — 호스트에서 직접 접근 가능
       - ./data:/data
