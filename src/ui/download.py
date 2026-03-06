@@ -88,6 +88,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         return False
 
     # 4. mp3 변환 (audio_only 또는 both)
+    mp3_path: Path | None = None
     if audio_only or both:
         console.print()
         console.print("  [dim]mp3 변환 중...[/dim]")
@@ -104,9 +105,21 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         if both:
             console.print(f"  [dim]{mp4_path}[/dim]")
         console.print(f"  [dim]{mp3_path}[/dim]")
-        return True
+    else:
+        console.print()
+        console.print(f"  [bold green]다운로드 완료![/bold green]")
+        console.print(f"  [dim]{mp4_path}[/dim]")
 
-    console.print()
-    console.print(f"  [bold green]다운로드 완료![/bold green]")
-    console.print(f"  [dim]{mp4_path}[/dim]")
+    # 5. STT 변환 (mp3가 있고 STT_ENABLED=true인 경우)
+    if mp3_path and Config.STT_ENABLED == "true":
+        console.print()
+        console.print("  [dim]STT 변환 중... (시간이 걸릴 수 있습니다)[/dim]")
+        try:
+            from src.stt.transcriber import transcribe
+            txt_path = transcribe(mp3_path, model_size=Config.WHISPER_MODEL or "base")
+            console.print(f"  [bold green]STT 완료![/bold green]")
+            console.print(f"  [dim]{txt_path}[/dim]")
+        except Exception as e:
+            console.print(f"  [bold red]STT 실패:[/bold red] {e}")
+
     return True
