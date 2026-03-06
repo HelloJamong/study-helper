@@ -1,0 +1,139 @@
+"""
+재생 화면 UI.
+
+백그라운드 재생 진행 상태를 rich Progress bar로 표시한다.
+"""
+
+import asyncio
+from typing import Optional
+
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.text import Text
+
+from src.player.background_player import PlaybackState, play_lecture
+from src.scraper.models import LectureItem
+
+console = Console()
+
+
+def _fmt_time(seconds: float) -> str:
+    """초를 MM:SS 형식으로 변환한다."""
+    s = max(0, int(seconds))
+    m, sec = divmod(s, 60)
+    return f"{m:02d}:{sec:02d}"
+
+
+def _parse_duration(duration_str: Optional[str]) -> float:
+    """'MM:SS' 형식의 문자열을 초로 변환한다. 파싱 실패 시 0.0 반환."""
+    if not duration_str:
+        return 0.0
+    try:
+        parts = duration_str.split(":")
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except Exception:
+        pass
+    return 0.0
+
+
+async def run_player(page, lec: LectureItem, debug: bool = False) -> bool:
+    """
+    강의를 백그라운드 재생하고 CUI로 진행 상태를 표시한다.
+
+    Args:
+        page: CourseScraper._page (Playwright Page)
+        lec:  재생할 LectureItem
+
+    Returns:
+        True: 정상 완료 / False: 오류
+    """
+    console.clear()
+    console.print(Panel(
+        Text(lec.title, justify="center", style="bold cyan"),
+        border_style="cyan",
+        padding=(0, 4),
+    ))
+    console.print()
+    console.print("  [dim]백그라운드로 강의를 재생합니다. 완료되면 자동으로 종료됩니다.[/dim]")
+    console.print()
+
+    # LectureItem.duration에서 예상 전체 시간 추출 (없으면 나중에 영상에서 채움)
+    estimated_duration = _parse_duration(lec.duration)
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("  [bold]{task.description}"),
+        BarColumn(bar_width=40),
+        TextColumn("{task.fields[time_str]}"),
+        TimeElapsedColumn(),
+        console=console,
+        expand=False,
+    )
+
+    total_ticks = max(int(estimated_duration), 1)
+    task_id: TaskID = progress.add_task(
+        lec.title[:40],
+        total=total_ticks,
+        time_str="--:-- / --:--",
+    )
+
+    result: dict = {"state": None}
+
+    def on_progress(state: PlaybackState):
+        """플레이어 콜백 → Progress bar 업데이트."""
+        result["state"] = state
+
+        dur = state.duration if state.duration > 0 else estimated_duration
+        cur = state.current
+
+        # duration이 실제로 확인되면 total 재설정
+        if state.duration > 0 and progress.tasks[task_id].total != int(state.duration):
+            progress.update(task_id, total=int(state.duration))
+
+        time_str = f"{_fmt_time(cur)} / {_fmt_time(dur)}"
+        progress.update(
+            task_id,
+            completed=int(cur),
+            time_str=time_str,
+        )
+
+    if debug:
+        # 디버그 모드: Live 없이 실행 (print 출력이 Live와 충돌 방지)
+        final_state = await play_lecture(
+            page=page,
+            lecture_url=lec.full_url,
+            on_progress=on_progress,
+            debug=True,
+        )
+    else:
+        with Live(progress, console=console, refresh_per_second=4):
+            final_state = await play_lecture(
+                page=page,
+                lecture_url=lec.full_url,
+                on_progress=on_progress,
+            )
+
+    console.print()
+
+    if final_state.error:
+        console.print(f"  [bold red]재생 오류:[/bold red] {final_state.error}")
+        return False
+
+    if final_state.ended:
+        console.print("  [bold green]재생 완료![/bold green]")
+        return True
+
+    console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
+    return False

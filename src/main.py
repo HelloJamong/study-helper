@@ -17,6 +17,7 @@ from src.ui.login import (
     show_login_success,
 )
 from src.ui.courses import LectureAction, show_course_list, show_loading, show_week_list
+from src.ui.player import run_player
 
 console = Console()
 
@@ -94,10 +95,11 @@ async def run():
 
         lec, action = result
         if action == LectureAction.PLAY:
-            console.print(f"\n  [yellow]재생 기능은 아직 구현되지 않았습니다: {lec.title}[/yellow]\n")
+            await run_player(scraper._page, lec, debug=True)
+            input("\n  Enter를 눌러 계속...")
         elif action == LectureAction.DOWNLOAD:
             console.print(f"\n  [yellow]다운로드 기능은 아직 구현되지 않았습니다: {lec.title}[/yellow]\n")
-        input("  Enter를 눌러 계속...")
+            input("  Enter를 눌러 계속...")
 
     await scraper.close()
 
