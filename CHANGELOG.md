@@ -1,5 +1,20 @@
 # Changelog
 
+## [v1.0.0-beta.3] - 2026-03-09
+
+### 추가
+- learningx 플레이어 강의 지원: `canvas.ssu.ac.kr/learningx/lti/lecture_attendance` 방식의 강의를 자동 감지하여 learningx API에서 `viewer_url`을 조회, 기존 Plan B(진도 API 방식)로 출석 처리
+- 재생 완료 후 강의 목록의 시청 상태(`completion`)를 즉시 갱신하여 재로드 없이 완료 표시 반영
+
+### 수정
+- 강의 페이지 이동 시 `wait_until="networkidle"` → `domcontentloaded`로 변경하여 LMS 스트리밍/폴링으로 인한 30초 타임아웃 오류 수정
+- 진도 API 요청에 `duration` 파라미터 누락으로 400 오류 발생하던 문제 수정 (재생 루프 및 `sendPlayedTime` JS 오버라이드 모두 반영)
+- git credential helper를 `osxkeychain`에서 `store`로 변경하여 `failed to get/store: -25308` 오류 제거
+- Playwright 브라우저 실행 인수에 `--password-store=basic` 추가하여 macOS Keychain 접근 경고 제거
+
+### 변경
+- 재생 화면에서 디버그 로그 비활성화, 프로그레스 바와 현재/전체 시간만 표시하도록 UI 정리
+
 ## [v1.0.0-beta.2] - 2026-03-07
 
 ### 추가

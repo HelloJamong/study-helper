@@ -59,6 +59,7 @@ class CourseScraper:
             "--no-zygote",
             "--disable-gpu",
             "--window-size=1280,720",
+            "--password-store=basic",
         ]
         # Chrome(H.264 포함) 우선 시도 — ARM64 등 미지원 환경에서는 Chromium으로 fallback
         try:

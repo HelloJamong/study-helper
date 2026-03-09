@@ -16,8 +16,6 @@ from rich.progress import (
     SpinnerColumn,
     TaskID,
     TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 from rich.text import Text
 
@@ -61,14 +59,6 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> bool:
         True: 정상 완료 / False: 오류
     """
     console.clear()
-    console.print(Panel(
-        Text(lec.title, justify="center", style="bold cyan"),
-        border_style="cyan",
-        padding=(0, 4),
-    ))
-    console.print()
-    console.print("  [dim]백그라운드로 강의를 재생합니다. 완료되면 자동으로 종료됩니다.[/dim]")
-    console.print()
 
     # LectureItem.duration에서 예상 전체 시간 추출 (없으면 나중에 영상에서 채움)
     estimated_duration = _parse_duration(lec.duration)
@@ -78,8 +68,6 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> bool:
         TextColumn("  [bold]{task.description}"),
         BarColumn(bar_width=40),
         TextColumn("{task.fields[time_str]}"),
-        TextColumn("[dim]남은시간[/dim]"),
-        TimeRemainingColumn(),
         console=console,
         expand=False,
     )

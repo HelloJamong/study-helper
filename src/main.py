@@ -101,7 +101,9 @@ async def run():
 
         lec, action = result
         if action == LectureAction.PLAY:
-            await run_player(scraper._page, lec, debug=True)
+            success = await run_player(scraper._page, lec, debug=False)
+            if success:
+                lec.completion = "completed"
             input("\n  Enter를 눌러 계속...")
         elif action == LectureAction.DOWNLOAD:
             rule = Config.DOWNLOAD_RULE or "both"

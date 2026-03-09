@@ -330,6 +330,94 @@ async def _report_completion(
         log(f"  [완료 보고] 재시도 실패: {e}")
 
 
+async def _play_via_learningx_api(
+    page: Page,
+    learningx_url: str,
+    on_progress: Optional[Callable[[PlaybackState], None]],
+    log: Callable,
+    fallback_duration: float = 0.0,
+) -> PlaybackState:
+    """
+    learningx 플레이어 전용 Plan B.
+
+    learningx /api/v1/courses/{course_id}/attendance_items/{item_id} 에서
+    viewer_url을 가져오면 commons TargetUrl이 포함되어 있어,
+    기존 _play_via_progress_api를 그대로 재사용할 수 있다.
+
+    learningx_url 예시:
+      https://canvas.ssu.ac.kr/learningx/lti/lecture_attendance/items/view/764082
+    """
+    import re as _re
+
+    state = PlaybackState()
+
+    # URL에서 item_id, course_id 추출
+    # tool_content frame URL이 아닌 learningx API를 직접 호출해야 하므로
+    # page 컨텍스트(canvas.ssu.ac.kr)에서 fetch — 쿠키 자동 포함
+    m = _re.search(r"/lecture_attendance/items/view/(\d+)", learningx_url)
+    if not m:
+        log(f"  [LX] item_id 파싱 실패: {learningx_url}")
+        state.error = "learningx item_id를 파싱하지 못했습니다."
+        return state
+
+    item_id = m.group(1)
+
+    # course_id는 페이지 URL에서 추출
+    cm = _re.search(r"/courses/(\d+)/", page.url)
+    if not cm:
+        log(f"  [LX] course_id 파싱 실패: {page.url}")
+        state.error = "learningx course_id를 파싱하지 못했습니다."
+        return state
+
+    course_id = cm.group(1)
+    api_url = f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{course_id}/attendance_items/{item_id}"
+    log(f"  [LX] learningx item API 호출: {api_url}")
+
+    try:
+        result = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const resp = await fetch({json.dumps(api_url)});
+                    return {{s: resp.status, b: await resp.text()}};
+                }} catch(e) {{
+                    return {{s: -1, b: e.message}};
+                }}
+            }}
+        """)
+        status = result.get("s")
+        body = result.get("b", "")
+        log(f"  [LX] API 응답: {status}")
+        if status != 200:
+            state.error = f"learningx API 오류: {status}"
+            return state
+    except Exception as e:
+        log(f"  [LX] API 호출 실패: {e}")
+        state.error = f"learningx API 호출 실패: {e}"
+        return state
+
+    try:
+        data = json.loads(body)
+    except Exception:
+        log(f"  [LX] JSON 파싱 실패: {body[:200]!r}")
+        state.error = "learningx API 응답 파싱 실패"
+        return state
+
+    viewer_url = data.get("viewer_url", "")
+    if not viewer_url:
+        log("  [LX] viewer_url 없음")
+        state.error = "learningx viewer_url 없음"
+        return state
+
+    duration = float(data.get("item_content_data", {}).get("duration", 0) or 0)
+    log(f"  [LX] viewer_url={viewer_url}")
+    log(f"  [LX] duration={duration:.1f}s — Plan B로 전환")
+
+    return await _play_via_progress_api(
+        page, viewer_url, on_progress, log,
+        fallback_duration=duration if duration > 0 else fallback_duration,
+    )
+
+
 async def _play_via_progress_api(
     page: Page,
     player_url: str,
@@ -609,7 +697,7 @@ async def play_lecture(
                 if request.post_data:
                     log(f"  [SNIFF→REQ] body={request.post_data!r}")
 
-        _FULL_BODY_KEYWORDS = ("attendance_items", "content.php", "chapter.xml", "progress", "lessons")
+        _FULL_BODY_KEYWORDS = ("attendance_items", "content.php", "chapter.xml", "progress", "lessons", "lecture_attendance")
 
         async def _on_response(response):
             url = response.url
@@ -655,7 +743,7 @@ async def play_lecture(
             except Exception:
                 pass
 
-    await page.goto(lecture_url, wait_until="networkidle")
+    await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
     log(f"    → 현재 URL: {page.url}")
 
     # 2. 초기 플레이어 선택 화면 frame 탐색 (재생 버튼이 있는 곳)
@@ -666,6 +754,17 @@ async def play_lecture(
         log("    → 현재 프레임 목록:")
         for f in page.frames:
             log(f"       name={f.name!r}  url={f.url}")
+
+        # learningx 플레이어 감지: tool_content가 learningx URL인 경우
+        # learningx API에서 viewer_url(commons TargetUrl 포함)을 가져와 Plan B로 실행
+        tool_frame = page.frame(name="tool_content")
+        if tool_frame and "learningx" in tool_frame.url:
+            log(f"    → learningx 플레이어 감지: {tool_frame.url}")
+            await _cleanup()
+            return await _play_via_learningx_api(
+                page, tool_frame.url, on_progress, log, fallback_duration
+            )
+
         state.error = "비디오 프레임을 찾지 못했습니다."
         await _cleanup()
         return state
@@ -772,6 +871,7 @@ async def play_lecture(
                         var url = lms_url + sep +
                             'callback=' + cbName +
                             '&state=' + stateVal +
+                            '&duration=' + v.duration.toFixed(2) +
                             '&currentTime=' + curTime.toFixed(2) +
                             '&cumulativeTime=' + curTime.toFixed(2) +
                             '&page=' + cumPage +
@@ -915,6 +1015,7 @@ async def play_lecture(
                     sep = "&" if "?" in _lms_url else "?"
                     progress_url = (
                         f"{_lms_url}{sep}callback=_cb_{ts}&state=8"
+                        f"&duration={dur:.2f}"
                         f"&currentTime={cur:.2f}&cumulativeTime={cur:.2f}"
                         f"&page={cum_page}&totalpage={_total_page}"
                         f"&cumulativePage={cum_page}&_={ts}"
