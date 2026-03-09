@@ -39,7 +39,6 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
     import asyncio
 
     captured: dict = {"url": None}
-    all_requests: list = []  # 디버그: 모든 네트워크 요청 기록
 
     _EXCLUDE_PATTERNS = ("preloader.mp4", "preview.mp4", "thumbnail.mp4")
 
@@ -48,15 +47,12 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
 
     def _on_request(request):
         url = request.url
-        all_requests.append(url)
         if _is_valid_mp4(url) and captured["url"] is None:
-            # print(f"  [NET] mp4 요청 감지: {url[:120]}")
             captured["url"] = url
 
     def _on_response(response):
         url = response.url
         if _is_valid_mp4(url) and captured["url"] is None:
-            # print(f"  [NET] mp4 응답 감지: {url[:120]}")
             captured["url"] = url
         # content.php 응답에서 미디어 URL 추출
         if "content.php" in url and "commons.ssu.ac.kr" in url:
@@ -65,38 +61,47 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
                     import xml.etree.ElementTree as ET
                     body = await response.text()
                     root = ET.fromstring(body)
-                    info = root.find("content_playing_info")
-                    if info is None:
-                        info = root
+                    # desktop > html5 > media_uri (progressive) 우선
+                    # mobile > html5 > media_uri fallback
+                    media_uri = None
 
-                    # service_root는 content_playing_info의 형제 노드 (root 직접 탐색)
-                    svc = root.find("service_root")
-                    progressive_uri = None
-                    if svc is not None:
-                        for media_el in svc.findall("media"):
-                            for uri_el in media_el.findall("media_uri"):
-                                if uri_el.get("method") == "progressive" and uri_el.get("target") == "all":
-                                    progressive_uri = uri_el.text.strip() if uri_el.text else None
-                                    break
-
-                    # main_media_list > main_media (파일명)
-                    media_file = None
-                    for story in info.findall(".//story"):
-                        for mm in story.findall(".//main_media"):
-                            if mm.text:
-                                media_file = mm.text.strip()
+                    # 구조 A: content_playing_info > main_media > desktop/html5/media_uri
+                    for path in (
+                        "content_playing_info/main_media/desktop/html5/media_uri",
+                        "content_playing_info/main_media/mobile/html5/media_uri",
+                        ".//main_media//html5/media_uri",
+                    ):
+                        el = root.find(path)
+                        if el is not None and el.text and el.text.strip():
+                            candidate = el.text.strip()
+                            if "[" not in candidate:
+                                media_uri = candidate
                                 break
 
-                    # print(f"  [NET] progressive_uri: {progressive_uri}")
-                    # print(f"  [NET] media_file: {media_file}")
+                    # 구조 B: service_root > media > media_uri[@method="progressive"]
+                    # [MEDIA_FILE] 플레이스홀더를 story_list의 실제 파일명으로 치환
+                    if not media_uri:
+                        media_uri_el = root.find(
+                            "service_root/media/media_uri[@method='progressive']"
+                        )
+                        if media_uri_el is not None and media_uri_el.text:
+                            url_template = media_uri_el.text.strip()
+                            if "[MEDIA_FILE]" in url_template:
+                                # main_media 텍스트에서 실제 파일명 추출
+                                main_media_el = root.find(
+                                    ".//story_list/story/main_media_list/main_media"
+                                )
+                                if main_media_el is not None and main_media_el.text:
+                                    media_uri = url_template.replace(
+                                        "[MEDIA_FILE]", main_media_el.text.strip()
+                                    )
+                            elif "[" not in url_template:
+                                media_uri = url_template
 
-                    if progressive_uri and media_file and "[MEDIA_FILE]" in progressive_uri:
-                        final_url = progressive_uri.replace("[MEDIA_FILE]", media_file)
-                        # print(f"  [NET] 미디어 URL 조합: {final_url}")
-                        if captured["url"] is None:
-                            captured["url"] = final_url
+                    if media_uri and captured["url"] is None:
+                        captured["url"] = media_uri
                 except Exception as e:
-                    pass  # print(f"  [NET] content.php 파싱 오류: {e}")
+                    print(f"  [NET] content.php 파싱 오류: {e}")
             asyncio.ensure_future(_parse_content_php())
 
     page.on("request", _on_request)
@@ -227,36 +232,25 @@ async def download_video_with_browser(
     save_path: Path,
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Path:
-    """Playwright 브라우저 컨텍스트로 영상을 다운로드한다 (CDN 인증 자동 처리)."""
+    """Playwright 브라우저 컨텍스트의 쿠키를 사용해 영상을 스트리밍 다운로드한다."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # CDN URL이 403이면 원본 서버(commons.ssu.ac.kr) 경로로 대체 시도
-    urls_to_try = [url]
-    if "commonscdn.com" in url:
-        fallback = url.replace("ssu-toast.commonscdn.com", "commons.ssu.ac.kr")
-        urls_to_try.append(fallback)
+    # Playwright 컨텍스트에서 쿠키 추출 → requests에 전달 (CDN 인증 자동 처리)
+    context_cookies = await page.context.cookies()
+    cookies = {c["name"]: c["value"] for c in context_cookies}
 
     referer = "https://commons.ssu.ac.kr/"
-    last_status = None
-    for try_url in urls_to_try:
-        # print(f"  [DBG] 다운로드 시도: {try_url[:100]}")
-        response = await page.request.get(
-            try_url,
-            headers={"Referer": referer},
-            timeout=0,  # 타임아웃 비활성화 (대용량 파일 대응)
-        )
-        last_status = response.status
-        # print(f"  [DBG] 응답 상태: {last_status}")
-        if response.status == 200:
-            total = int(response.headers.get("content-length", 0))
-            body = await response.body()
-            with open(save_path, "wb") as f:
-                f.write(body)
-            if on_progress and total > 0:
-                on_progress(len(body), total)
+    last_error = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            _stream_download(url, save_path, on_progress, attempt=attempt, cookies=cookies, referer=referer)
             return save_path.resolve()
-
-    raise Exception(f"다운로드 실패: HTTP {last_status} for {url}")
+        except Exception as e:
+            last_error = e
+            _remove_partial(save_path)
+            if attempt < _MAX_RETRIES:
+                time.sleep(2 ** attempt)
+    raise last_error
 
 
 def download_video(

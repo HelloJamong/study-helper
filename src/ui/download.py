@@ -180,7 +180,6 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
             console.print("  [yellow]AI 요약 건너뜀: API 키가 설정되지 않았습니다.[/yellow]")
         else:
             import warnings
-            import asyncio
             from concurrent.futures import ThreadPoolExecutor
             from src.summarizer.summarizer import GEMINI_DEFAULT_MODEL, summarize
 

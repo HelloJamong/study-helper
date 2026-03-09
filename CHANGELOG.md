@@ -1,5 +1,14 @@
 # Changelog
 
+## [v1.0.2] - 2026-03-09
+
+### 수정
+- **대용량 영상 다운로드 실패 수정**: `response.body()` 방식(전체 메모리 로드)을 Playwright 쿠키 추출 후 `requests` 스트리밍으로 교체 — Playwright 내부 문자열 크기 제한(`0x1fffffe8`)으로 인한 390MB 이상 파일 다운로드 오류 수정
+- **content.php XML 구조 B 지원 추가**: `service_root > media > media_uri`에 `[MEDIA_FILE]` 플레이스홀더를 사용하는 구형 강의 포맷 지원 — `story_list/.../main_media` 파일명으로 치환하여 실제 URL 생성
+- **다운로드 재시도 추가**: CDN 일시 오류(504 Gateway Time-out 등) 발생 시 지수 백오프(2초, 4초)로 최대 3회 자동 재시도
+
+---
+
 ## [v1.0.1] - 2026-03-09
 
 ### 변경
