@@ -8,6 +8,10 @@
 data/*
 !data/.gitkeep
 
+# Logs
+logs/*
+!logs/.gitkeep
+
 # Python
 __pycache__/
 *.py[cod]

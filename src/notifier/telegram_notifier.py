@@ -102,6 +102,19 @@ def notify_download_error(
     return _send_message(bot_token, chat_id, text)
 
 
+def notify_download_unsupported(
+    bot_token: str,
+    chat_id: str,
+    course_name: str,
+    week_label: str,
+    lecture_title: str,
+) -> bool:
+    """다운로드 불가 강의 알림을 전송한다."""
+    label = _lecture_label(course_name, week_label, lecture_title)
+    text = f"[안내] {label} 은(는) 다운로드가 지원되지 않는 강의입니다."
+    return _send_message(bot_token, chat_id, text)
+
+
 def notify_summary_complete(
     bot_token: str,
     chat_id: str,

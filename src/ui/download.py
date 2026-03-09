@@ -5,6 +5,7 @@
 다운로드 경로는 설정(settings)에서 관리하며, Config에서 직접 읽는다.
 """
 
+import asyncio
 from pathlib import Path
 
 from rich.console import Console
@@ -15,6 +16,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 from src.config import Config
+from src.logger import get_error_logger
 
 console = Console()
 
@@ -55,16 +57,42 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         if tg_token and tg_chat_id:
             msg_fn(tg_token, tg_chat_id)
 
-    # 1. video URL 추출
-    console.print("  [dim]영상 URL 추출 중...[/dim]")
-    video_url = await extract_video_url(page, lec.full_url)
+    # 1. learningx 타입 조기 감지 (구조적으로 다운로드 불가)
+    if "learningx" in lec.full_url:
+        console.print("  [yellow]다운로드 불가:[/yellow] 이 강의는 다운로드가 지원되지 않는 형식입니다.")
+        from src.notifier.telegram_notifier import notify_download_unsupported
+        _tg_error(lambda t, c: notify_download_unsupported(t, c, course.long_name, lec.week_label, lec.title))
+        return False
+
+    # 2. video URL 추출 (최대 3회 재시도)
+    _MAX_URL_RETRIES = 3
+    _RETRY_WAIT = 10  # seconds
+
+    video_url = None
+    for attempt in range(1, _MAX_URL_RETRIES + 1):
+        if attempt == 1:
+            console.print("  [dim]영상 URL 추출 중...[/dim]")
+        else:
+            console.print(f"  [dim]영상 URL 추출 재시도 ({attempt}/{_MAX_URL_RETRIES})...[/dim]")
+        video_url = await extract_video_url(page, lec.full_url)
+        if video_url:
+            break
+        if attempt < _MAX_URL_RETRIES:
+            console.print(f"  [yellow]URL 추출 실패. {_RETRY_WAIT}초 후 재시도합니다...[/yellow]")
+            await asyncio.sleep(_RETRY_WAIT)
+
     if not video_url:
-        console.print("  [bold red]오류:[/bold red] 영상 URL을 찾지 못했습니다.")
+        console.print("  [bold red]오류:[/bold red] 영상 URL을 찾지 못했습니다. (3회 시도)")
+        logger, log_path = get_error_logger("download")
+        logger.info(f"강의: {lec.title}")
+        logger.info(f"URL: {lec.full_url}")
+        logger.info("오류: 영상 URL 추출 실패 (3회 재시도 후에도 실패)")
+        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         from src.notifier.telegram_notifier import notify_download_error
         _tg_error(lambda t, c: notify_download_error(t, c, course.long_name, lec.week_label, lec.title))
         return False
 
-    # 2. 파일 경로 결정
+    # 3. 파일 경로 결정
     mp4_filename = make_filename(course.long_name, lec.title)
     mp4_path = Path(download_dir) / mp4_filename
 
@@ -97,6 +125,12 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
             await download_video_with_browser(page, video_url, mp4_path, on_progress=on_progress)
     except Exception as e:
         console.print(f"  [bold red]다운로드 실패:[/bold red] {e}")
+        logger, log_path = get_error_logger("download")
+        logger.info(f"강의: {lec.title}")
+        logger.info(f"URL: {lec.full_url}")
+        logger.info(f"영상 URL: {video_url}")
+        logger.error(f"다운로드 실패: {e}")
+        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         from src.notifier.telegram_notifier import notify_download_error
         _tg_error(lambda t, c: notify_download_error(t, c, course.long_name, lec.week_label, lec.title))
         return False

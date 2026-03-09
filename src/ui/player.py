@@ -21,6 +21,7 @@ from rich.text import Text
 
 from src.player.background_player import PlaybackState, play_lecture
 from src.scraper.models import LectureItem
+from src.logger import get_error_logger
 
 console = Console()
 
@@ -84,6 +85,12 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
 
     result: dict = {"state": None}
 
+    # 오류 발생 시에만 파일에 기록할 로그 버퍼
+    log_buffer: list[str] = []
+
+    def _log(msg: str):
+        log_buffer.append(msg)
+
     def on_progress(state: PlaybackState):
         """플레이어 콜백 → Progress bar 업데이트."""
         result["state"] = state
@@ -107,20 +114,38 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
             page=page,
             lecture_url=lec.full_url,
             on_progress=on_progress,
-            debug=debug,
+            debug=True,  # 항상 로그 수집 (오류 시 파일로 저장)
             fallback_duration=estimated_duration,
-            log_fn=console.log if debug else None,
+            log_fn=_log,
         )
 
     console.print()
 
     if final_state.error:
         console.print(f"  [bold red]재생 오류:[/bold red] {final_state.error}")
+        # 오류 발생 시에만 로그 파일 생성
+        logger, log_path = get_error_logger("play")
+        logger.info(f"강의: {lec.title}")
+        logger.info(f"URL: {lec.full_url}")
+        logger.info(f"오류: {final_state.error}")
+        logger.info("--- 재생 로그 ---")
+        for line in log_buffer:
+            logger.info(line)
+        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         return False, True
 
     if final_state.ended:
         console.print("  [bold green]재생 완료![/bold green]")
         return True, False
 
+    # 재생 미완료(중단)도 로그 저장
+    logger, log_path = get_error_logger("play")
+    logger.info(f"강의: {lec.title}")
+    logger.info(f"URL: {lec.full_url}")
+    logger.info(f"상태: 재생 미완료 (current={final_state.current:.1f}s / duration={final_state.duration:.1f}s)")
+    logger.info("--- 재생 로그 ---")
+    for line in log_buffer:
+        logger.info(line)
     console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
+    console.print(f"  [dim]로그 저장: {log_path}[/dim]")
     return False, False

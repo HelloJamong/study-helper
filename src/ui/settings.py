@@ -115,7 +115,7 @@ def run_settings() -> None:
             console.print("  [dim]변경하지 않으려면 Enter를 누르세요.[/dim]")
         console.print()
 
-        raw_key = Prompt.ask("  API 키", default="", password=True).strip()
+        raw_key = Prompt.ask("  API 키", default="").strip()
         api_key = raw_key if raw_key else _existing_key
         console.print()
 
@@ -161,7 +161,7 @@ def run_settings() -> None:
             console.print(f"  [dim]현재 토큰: {tg_token[:10]}{'*' * 20}[/dim]")
             console.print("  [dim]변경하지 않으려면 Enter를 누르세요.[/dim]")
         console.print()
-        raw_token = Prompt.ask("  봇 토큰", default="", password=True).strip()
+        raw_token = Prompt.ask("  봇 토큰", default="").strip()
         if raw_token:
             tg_token = raw_token
         console.print()
