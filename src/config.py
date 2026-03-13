@@ -1,9 +1,10 @@
 import os
 import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
 
-from src.crypto import decrypt, encrypt, is_encrypted  # noqa: F401 (encrypt used in save_credentials)
+from src.crypto import decrypt, encrypt, is_encrypted
 
 # .env 파일 로드 (없으면 환경변수만 사용)
 _env_path = Path(__file__).parent.parent / ".env"
@@ -59,6 +60,7 @@ def _default_download_dir() -> str:
 def _read_version() -> str:
     """CHANGELOG.md의 첫 번째 ## [vX.Y.Z] 항목에서 버전을 읽어온다."""
     import re
+
     changelog = Path(__file__).parent.parent / "CHANGELOG.md"
     try:
         for line in changelog.read_text(encoding="utf-8").splitlines():
@@ -79,6 +81,8 @@ class Config:
     GOOGLE_API_KEY: str = _load_credential("GOOGLE_API_KEY")
     OPENAI_API_KEY: str = _load_credential("OPENAI_API_KEY")
     WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")
+    # STT 언어: ko, en, 빈 문자열(자동 감지)
+    STT_LANGUAGE: str = os.getenv("STT_LANGUAGE", "ko")
     DOWNLOAD_DIR: str = os.getenv("DOWNLOAD_DIR", "")
     # 다운로드 규칙: video / audio / both
     DOWNLOAD_RULE: str = os.getenv("DOWNLOAD_RULE", "")
@@ -90,6 +94,8 @@ class Config:
     AI_AGENT: str = os.getenv("AI_AGENT", "")
     # Gemini 모델 ID
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "")
+    # 요약 프롬프트 추가 지시사항
+    SUMMARY_PROMPT_EXTRA: str = os.getenv("SUMMARY_PROMPT_EXTRA", "")
     # 텔레그램 봇 연동
     TELEGRAM_ENABLED: str = os.getenv("TELEGRAM_ENABLED", "")
     TELEGRAM_BOT_TOKEN: str = _load_credential("TELEGRAM_BOT_TOKEN")
@@ -112,16 +118,24 @@ class Config:
         return cls.DOWNLOAD_DIR or _default_download_dir()
 
     @classmethod
-    def save_settings(cls, download_dir: str, download_rule: str,
-                      stt_enabled: bool, ai_enabled: bool,
-                      ai_agent: str, api_key: str,
-                      gemini_model: str = "") -> None:
+    def save_settings(
+        cls,
+        download_dir: str,
+        download_rule: str,
+        stt_enabled: bool,
+        ai_enabled: bool,
+        ai_agent: str,
+        api_key: str,
+        gemini_model: str = "",
+        summary_prompt_extra: str = "",
+    ) -> None:
         """설정 항목을 .env 파일에 저장한다."""
         cls.DOWNLOAD_DIR = download_dir
         cls.DOWNLOAD_RULE = download_rule
         cls.STT_ENABLED = "true" if stt_enabled else "false"
         cls.AI_ENABLED = "true" if ai_enabled else "false"
         cls.AI_AGENT = ai_agent
+        cls.SUMMARY_PROMPT_EXTRA = summary_prompt_extra
         if gemini_model:
             cls.GEMINI_MODEL = gemini_model
         # API 키는 선택한 에이전트에 맞게 저장
@@ -136,6 +150,7 @@ class Config:
             "STT_ENABLED": cls.STT_ENABLED,
             "AI_ENABLED": cls.AI_ENABLED,
             "AI_AGENT": ai_agent,
+            "SUMMARY_PROMPT_EXTRA": summary_prompt_extra,
         }
         if gemini_model:
             to_save["GEMINI_MODEL"] = gemini_model
@@ -152,22 +167,26 @@ class Config:
         cls.TELEGRAM_BOT_TOKEN = bot_token
         cls.TELEGRAM_CHAT_ID = chat_id
         cls.TELEGRAM_AUTO_DELETE = "true" if auto_delete else "false"
-        cls._save_env({
-            "TELEGRAM_ENABLED": cls.TELEGRAM_ENABLED,
-            "TELEGRAM_BOT_TOKEN": encrypt(bot_token) if bot_token else "",
-            "TELEGRAM_CHAT_ID": chat_id,
-            "TELEGRAM_AUTO_DELETE": cls.TELEGRAM_AUTO_DELETE,
-        })
+        cls._save_env(
+            {
+                "TELEGRAM_ENABLED": cls.TELEGRAM_ENABLED,
+                "TELEGRAM_BOT_TOKEN": encrypt(bot_token) if bot_token else "",
+                "TELEGRAM_CHAT_ID": chat_id,
+                "TELEGRAM_AUTO_DELETE": cls.TELEGRAM_AUTO_DELETE,
+            }
+        )
 
     @classmethod
     def save_credentials(cls, user_id: str, password: str) -> None:
         """계정 정보를 암호화해서 .env 파일에 저장"""
         cls.LMS_USER_ID = user_id
         cls.LMS_PASSWORD = password
-        cls._save_env({
-            "LMS_USER_ID": encrypt(user_id),
-            "LMS_PASSWORD": encrypt(password),
-        })
+        cls._save_env(
+            {
+                "LMS_USER_ID": encrypt(user_id),
+                "LMS_PASSWORD": encrypt(password),
+            }
+        )
 
     @classmethod
     def _save_env(cls, keys_to_update: dict) -> None:
@@ -176,7 +195,7 @@ class Config:
         lines = []
 
         if env_path.exists():
-            with open(env_path, "r", encoding="utf-8") as f:
+            with open(env_path, encoding="utf-8") as f:
                 lines = f.readlines()
 
         updated_keys = set()

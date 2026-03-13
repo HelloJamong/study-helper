@@ -7,29 +7,29 @@ requests로 청크 스트리밍 다운로드한다.
 
 import re
 import time
+from collections.abc import Callable
 from http.client import IncompleteRead
 from pathlib import Path
-from typing import Callable, Optional
 
 import requests
 from playwright.async_api import Page
 
-from src.player.background_player import _find_player_frame, _click_play, _dismiss_dialog
+from src.player.background_player import _click_play, _dismiss_dialog, _find_player_frame
 
 _MAX_RETRIES = 3
-_TIMEOUT = (10, 60)   # (connect, read) seconds
-_CHUNK_SIZE = 65536   # 64 KB
+_TIMEOUT = (10, 60)  # (connect, read) seconds
+_CHUNK_SIZE = 65536  # 64 KB
 
 
 def _sanitize_filename(name: str) -> str:
     """파일명에 사용 불가한 문자를 제거한다."""
-    sanitized = re.sub(r'[<>:"/\\|?*]', '', name)
-    sanitized = sanitized.strip(' .')
-    sanitized = re.sub(r'\s+', ' ', sanitized)
-    return sanitized or 'lecture'
+    sanitized = re.sub(r'[<>:"/\\|?*]', "", name)
+    sanitized = sanitized.strip(" .")
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    return sanitized or "lecture"
 
 
-async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
+async def extract_video_url(page: Page, lecture_url: str) -> str | None:
     """
     LMS 강의 페이지에서 mp4 URL을 추출한다.
 
@@ -40,10 +40,10 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
 
     captured: dict = {"url": None}
 
-    _EXCLUDE_PATTERNS = ("preloader.mp4", "preview.mp4", "thumbnail.mp4")
+    exclude_patterns = ("preloader.mp4", "preview.mp4", "thumbnail.mp4")
 
     def _is_valid_mp4(url: str) -> bool:
-        return ".mp4" in url and not any(p in url for p in _EXCLUDE_PATTERNS)
+        return ".mp4" in url and not any(p in url for p in exclude_patterns)
 
     def _on_request(request):
         url = request.url
@@ -56,9 +56,11 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
             captured["url"] = url
         # content.php 응답에서 미디어 URL 추출
         if "content.php" in url and "commons.ssu.ac.kr" in url:
+
             async def _parse_content_php():
                 try:
                     import xml.etree.ElementTree as ET
+
                     body = await response.text()
                     root = ET.fromstring(body)
                     # desktop > html5 > media_uri (progressive) 우선
@@ -81,20 +83,14 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
                     # 구조 B: service_root > media > media_uri[@method="progressive"]
                     # [MEDIA_FILE] 플레이스홀더를 story_list의 실제 파일명으로 치환
                     if not media_uri:
-                        media_uri_el = root.find(
-                            "service_root/media/media_uri[@method='progressive']"
-                        )
+                        media_uri_el = root.find("service_root/media/media_uri[@method='progressive']")
                         if media_uri_el is not None and media_uri_el.text:
                             url_template = media_uri_el.text.strip()
                             if "[MEDIA_FILE]" in url_template:
                                 # main_media 텍스트에서 실제 파일명 추출
-                                main_media_el = root.find(
-                                    ".//story_list/story/main_media_list/main_media"
-                                )
+                                main_media_el = root.find(".//story_list/story/main_media_list/main_media")
                                 if main_media_el is not None and main_media_el.text:
-                                    media_uri = url_template.replace(
-                                        "[MEDIA_FILE]", main_media_el.text.strip()
-                                    )
+                                    media_uri = url_template.replace("[MEDIA_FILE]", main_media_el.text.strip())
                             elif "[" not in url_template:
                                 media_uri = url_template
 
@@ -102,7 +98,8 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
                         captured["url"] = media_uri
                 except Exception as e:
                     print(f"  [NET] content.php 파싱 오류: {e}")
-            asyncio.ensure_future(_parse_content_php())
+
+            _task = asyncio.ensure_future(_parse_content_php())  # noqa: RUF006
 
     page.on("request", _on_request)
     page.on("response", _on_response)
@@ -134,7 +131,7 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
         # 이어보기 다이얼로그 처리 후 재생 버튼 클릭
         await asyncio.sleep(1)
         await _dismiss_dialog(player_frame, restart=True)
-        clicked = await _click_play(player_frame)
+        await _click_play(player_frame)
         # print(f"  [DBG] 재생 버튼 클릭: {'성공' if clicked else '실패(버튼 없음)'}")
         await asyncio.sleep(1)
         await _dismiss_dialog(player_frame, restart=True)
@@ -143,7 +140,7 @@ async def extract_video_url(page: Page, lecture_url: str) -> Optional[str]:
         # 재생 후 새로운 frame이 생성될 수 있으므로 page.frames 전체를 매번 재스캔
         # 이어보기 다이얼로그도 매 폴링마다 체크 (재생 도중 뒤늦게 뜨는 경우 대응)
         dialog_dismissed = False
-        for i in range(120):
+        for _i in range(120):
             # Plan B 먼저 확인 (network에서 이미 캡처됐을 수 있음)
             if captured["url"]:
                 return captured["url"]
@@ -230,7 +227,7 @@ async def download_video_with_browser(
     page,
     url: str,
     save_path: Path,
-    on_progress: Optional[Callable[[int, int], None]] = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Playwright 브라우저 컨텍스트의 쿠키를 사용해 영상을 스트리밍 다운로드한다."""
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,18 +244,19 @@ async def download_video_with_browser(
             return save_path.resolve()
         except Exception as e:
             last_error = e
-            _remove_partial(save_path)
+            # 부분 파일은 유지 — 다음 시도에서 Range 헤더로 이어받기
             if attempt < _MAX_RETRIES:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
+    _remove_partial(save_path)
     raise last_error
 
 
 def download_video(
     url: str,
     save_path: Path,
-    on_progress: Optional[Callable[[int, int], None]] = None,
-    cookies: dict = None,
-    referer: str = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    cookies: dict | None = None,
+    referer: str | None = None,
 ) -> Path:
     """
     HTTP 스트리밍으로 영상을 다운로드한다.
@@ -285,7 +283,7 @@ def download_video(
             last_error = e
             _remove_partial(save_path)
             if attempt < _MAX_RETRIES:
-                wait = 2 ** attempt
+                wait = 2**attempt
                 time.sleep(wait)
         except Exception as e:
             last_error = e
@@ -298,20 +296,38 @@ def download_video(
 def _stream_download(
     url: str,
     save_path: Path,
-    on_progress: Optional[Callable[[int, int], None]],
+    on_progress: Callable[[int, int], None] | None,
     attempt: int,
-    cookies: dict = None,
-    referer: str = None,
+    cookies: dict | None = None,
+    referer: str | None = None,
 ):
     headers = {"Referer": referer} if referer else {}
-    response = requests.get(url, stream=True, timeout=_TIMEOUT,
-                            cookies=cookies, headers=headers)
-    response.raise_for_status()
+    existing_size = 0
 
-    total = int(response.headers.get("content-length", 0))
-    downloaded = 0
+    # 재시도 시 기존 파일이 있으면 이어받기 시도
+    if attempt > 1 and save_path.exists():
+        existing_size = save_path.stat().st_size
+        if existing_size > 0:
+            headers["Range"] = f"bytes={existing_size}-"
 
-    with open(save_path, "wb") as f:
+    response = requests.get(url, stream=True, timeout=_TIMEOUT, cookies=cookies, headers=headers)
+
+    if response.status_code == 206:
+        # 서버가 Range 지원 → 이어받기
+        mode = "ab"
+        total = existing_size + int(response.headers.get("content-length", 0))
+        downloaded = existing_size
+    elif response.status_code == 200:
+        # 서버가 Range 미지원 또는 첫 시도 → 처음부터
+        response.raise_for_status()
+        mode = "wb"
+        total = int(response.headers.get("content-length", 0))
+        downloaded = 0
+    else:
+        response.raise_for_status()
+        return
+
+    with open(save_path, mode) as f:
         for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
             if chunk:
                 f.write(chunk)

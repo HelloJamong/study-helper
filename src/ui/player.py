@@ -4,12 +4,8 @@
 백그라운드 재생 진행 상태를 rich Progress bar로 표시한다.
 """
 
-import asyncio
-from typing import Optional
-
 from rich.console import Console
 from rich.live import Live
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -17,11 +13,11 @@ from rich.progress import (
     TaskID,
     TextColumn,
 )
-from rich.text import Text
 
+from src.config import Config
+from src.logger import get_error_logger
 from src.player.background_player import PlaybackState, play_lecture
 from src.scraper.models import LectureItem
-from src.logger import get_error_logger
 
 console = Console()
 
@@ -33,7 +29,7 @@ def _fmt_time(seconds: float) -> str:
     return f"{m:02d}:{sec:02d}"
 
 
-def _parse_duration(duration_str: Optional[str]) -> float:
+def _parse_duration(duration_str: str | None) -> float:
     """'MM:SS' 형식의 문자열을 초로 변환한다. 파싱 실패 시 0.0 반환."""
     if not duration_str:
         return 0.0
@@ -46,6 +42,22 @@ def _parse_duration(duration_str: Optional[str]) -> float:
     except Exception:
         pass
     return 0.0
+
+
+def _tg_playback_error(lec: LectureItem, failed: bool = True) -> None:
+    """재생 실패/미완료 시 텔레그램 알림을 전송한다 (설정된 경우에만)."""
+    if Config.TELEGRAM_ENABLED != "true":
+        return
+    token = Config.TELEGRAM_BOT_TOKEN
+    chat_id = Config.TELEGRAM_CHAT_ID
+    if not token or not chat_id:
+        return
+    try:
+        from src.notifier.telegram_notifier import notify_playback_error
+
+        notify_playback_error(token, chat_id, "", lec.week_label, lec.title, failed=failed)
+    except Exception:
+        pass
 
 
 async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool, bool]:
@@ -132,6 +144,7 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
         for line in log_buffer:
             logger.info(line)
         console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+        _tg_playback_error(lec, failed=True)
         return False, True
 
     if final_state.ended:
@@ -148,4 +161,5 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
         logger.info(line)
     console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
     console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+    _tg_playback_error(lec, failed=False)
     return False, False

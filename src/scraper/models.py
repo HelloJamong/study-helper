@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
 
 _BASE_URL = "https://canvas.ssu.ac.kr"
 
@@ -53,13 +52,13 @@ class LectureItem:
     lecture_type: LectureType
     week_label: str = ""
     lesson_label: str = ""
-    duration: Optional[str] = None
+    duration: str | None = None
     attendance: str = "none"
     completion: str = "incomplete"
     content_type_label: str = ""
     is_upcoming: bool = False
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_date: str | None = None
+    end_date: str | None = None
 
     @property
     def is_video(self) -> bool:
@@ -80,15 +79,15 @@ class LectureItem:
 class Week:
     title: str
     week_number: int
-    lectures: List[LectureItem] = field(default_factory=list)
+    lectures: list[LectureItem] = field(default_factory=list)
 
     @property
-    def video_lectures(self) -> List[LectureItem]:
-        return [l for l in self.lectures if l.is_video]
+    def video_lectures(self) -> list[LectureItem]:
+        return [lec for lec in self.lectures if lec.is_video]
 
     @property
     def pending_count(self) -> int:
-        return sum(1 for l in self.lectures if l.needs_watch)
+        return sum(1 for lec in self.lectures if lec.needs_watch)
 
 
 @dataclass
@@ -96,10 +95,10 @@ class CourseDetail:
     course: Course
     course_name: str
     professors: str
-    weeks: List[Week] = field(default_factory=list)
+    weeks: list[Week] = field(default_factory=list)
 
     @property
-    def all_video_lectures(self) -> List[LectureItem]:
+    def all_video_lectures(self) -> list[LectureItem]:
         result = []
         for week in self.weeks:
             result.extend(week.video_lectures)
@@ -111,4 +110,4 @@ class CourseDetail:
 
     @property
     def pending_video_count(self) -> int:
-        return sum(1 for l in self.all_video_lectures if l.needs_watch)
+        return sum(1 for lec in self.all_video_lectures if lec.needs_watch)

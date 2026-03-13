@@ -11,8 +11,15 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn, TransferSpeedColumn
-from rich.spinner import Spinner
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TransferSpeedColumn,
+)
 from rich.text import Text
 
 from src.config import Config
@@ -21,7 +28,7 @@ from src.logger import get_error_logger
 console = Console()
 
 
-async def run_download(page, lec, course, audio_only: bool = False, both: bool = False) -> bool:  # noqa: C901
+async def run_download(page, lec, course, audio_only: bool = False, both: bool = False) -> bool:
     """
     강의 영상을 다운로드하고 진행률을 Progress bar로 표시한다.
 
@@ -35,15 +42,17 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
     Returns:
         True: 정상 완료 / False: 오류
     """
-    from src.downloader.video_downloader import extract_video_url, download_video_with_browser, make_filename
     from src.converter.audio_converter import convert_to_mp3
+    from src.downloader.video_downloader import download_video_with_browser, extract_video_url, make_filename
 
     console.print()
-    console.print(Panel(
-        Text(lec.title, justify="center", style="bold cyan"),
-        border_style="cyan",
-        padding=(0, 4),
-    ))
+    console.print(
+        Panel(
+            Text(lec.title, justify="center", style="bold cyan"),
+            border_style="cyan",
+            padding=(0, 4),
+        )
+    )
     console.print()
 
     download_dir = Config.get_download_dir()
@@ -61,6 +70,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
     if "learningx" in lec.full_url:
         console.print("  [yellow]다운로드 불가:[/yellow] 이 강의는 다운로드가 지원되지 않는 형식입니다.")
         from src.notifier.telegram_notifier import notify_download_unsupported
+
         _tg_error(lambda t, c: notify_download_unsupported(t, c, course.long_name, lec.week_label, lec.title))
         return False
 
@@ -89,6 +99,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         logger.info("오류: 영상 URL 추출 실패 (3회 재시도 후에도 실패)")
         console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         from src.notifier.telegram_notifier import notify_download_error
+
         _tg_error(lambda t, c: notify_download_error(t, c, course.long_name, lec.week_label, lec.title))
         return False
 
@@ -119,6 +130,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
 
     try:
         with Live(progress, console=console, refresh_per_second=8):
+
             def on_progress(downloaded: int, total: int):
                 progress.update(task_id, completed=downloaded, total=total)
 
@@ -132,6 +144,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         logger.error(f"다운로드 실패: {e}")
         console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         from src.notifier.telegram_notifier import notify_download_error
+
         _tg_error(lambda t, c: notify_download_error(t, c, course.long_name, lec.week_label, lec.title))
         return False
 
@@ -149,13 +162,13 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
             return False
 
         console.print()
-        console.print(f"  [bold green]다운로드 완료![/bold green]")
+        console.print("  [bold green]다운로드 완료![/bold green]")
         if both:
             console.print(f"  [dim]{mp4_path}[/dim]")
         console.print(f"  [dim]{mp3_path}[/dim]")
     else:
         console.print()
-        console.print(f"  [bold green]다운로드 완료![/bold green]")
+        console.print("  [bold green]다운로드 완료![/bold green]")
         console.print(f"  [dim]{mp4_path}[/dim]")
 
     # 5. STT 변환 (mp3가 있고 STT_ENABLED=true인 경우)
@@ -165,8 +178,13 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         console.print("  [dim]STT 변환 중... (시간이 걸릴 수 있습니다)[/dim]")
         try:
             from src.stt.transcriber import transcribe
-            txt_path = transcribe(mp3_path, model_size=Config.WHISPER_MODEL or "base")
-            console.print(f"  [bold green]STT 완료![/bold green]")
+
+            txt_path = transcribe(
+                mp3_path,
+                model_size=Config.WHISPER_MODEL or "base",
+                language=Config.STT_LANGUAGE,
+            )
+            console.print("  [bold green]STT 완료![/bold green]")
             console.print(f"  [dim]{txt_path}[/dim]")
         except Exception as e:
             console.print(f"  [bold red]STT 실패:[/bold red] {e}")
@@ -181,6 +199,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         else:
             import warnings
             from concurrent.futures import ThreadPoolExecutor
+
             from src.summarizer.summarizer import GEMINI_DEFAULT_MODEL, summarize
 
             console.print()
@@ -206,9 +225,10 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
                                     agent=Config.AI_AGENT or "gemini",
                                     api_key=api_key,
                                     model=model or GEMINI_DEFAULT_MODEL,
+                                    extra_prompt=Config.SUMMARY_PROMPT_EXTRA,
                                 ),
                             )
-                console.print(f"  [bold green]AI 요약 완료![/bold green]")
+                console.print("  [bold green]AI 요약 완료![/bold green]")
                 console.print(f"  [dim]{summary_path}[/dim]")
             except Exception as e:
                 console.print(f"  [bold red]AI 요약 실패:[/bold red] {e}")

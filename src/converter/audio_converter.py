@@ -33,11 +33,14 @@ def convert_to_mp3(mp4_path: Path, mp3_path: Path | None = None) -> Path:
 
     cmd = [
         "ffmpeg",
-        "-y",                  # 덮어쓰기 허용
-        "-i", str(mp4_path),   # 입력 파일
-        "-vn",                 # 비디오 스트림 제외
-        "-acodec", "libmp3lame",
-        "-q:a", "2",           # VBR 품질 (0=최고, 9=최저), 2 ≈ 192kbps
+        "-y",  # 덮어쓰기 허용
+        "-i",
+        str(mp4_path),  # 입력 파일
+        "-vn",  # 비디오 스트림 제외
+        "-acodec",
+        "libmp3lame",
+        "-q:a",
+        "2",  # VBR 품질 (0=최고, 9=최저), 2 ≈ 192kbps
         str(mp3_path),
     ]
 
@@ -48,7 +51,7 @@ def convert_to_mp3(mp4_path: Path, mp3_path: Path | None = None) -> Path:
             text=True,
         )
     except FileNotFoundError:
-        raise FileNotFoundError("ffmpeg가 설치되어 있지 않습니다. ffmpeg를 먼저 설치해주세요.")
+        raise FileNotFoundError("ffmpeg가 설치되어 있지 않습니다. ffmpeg를 먼저 설치해주세요.") from None
 
     if result.returncode != 0:
         raise RuntimeError(f"mp3 변환 실패:\n{result.stderr[-500:]}")

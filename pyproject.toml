@@ -25,12 +25,54 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+    "ruff>=0.11",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+]
 
 [project.scripts]
 study-helper = "src.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",    # line-length (formatter가 처리)
+    "N806",    # 함수 내 상수성 변수 (대문자 허용)
+    "SIM105",  # contextlib.suppress — try-except-pass가 더 명확한 경우 많음
+    "SIM108",  # 삼항 연산자 — 한국어 f-string에서 가독성 저하
+    "SIM102",  # nested if — 조건 분리가 더 명확한 경우 많음
+    "SIM117",  # nested with — 호환성 유지
+    "RUF002",  # 한국어 docstring 내 유니코드 문자 허용
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling"]

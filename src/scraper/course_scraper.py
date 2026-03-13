@@ -1,13 +1,16 @@
 import asyncio
 import re
-from typing import List, Optional, Callable
+from collections.abc import Callable
 
-from playwright.async_api import async_playwright, Page, Frame
+from playwright.async_api import Frame, async_playwright
 
 from src.auth.login import ensure_logged_in
 from src.scraper.models import (
-    Course, LectureItem, Week, CourseDetail,
-    LectureType, VIDEO_LECTURE_TYPES,
+    Course,
+    CourseDetail,
+    LectureItem,
+    LectureType,
+    Week,
 )
 
 _BASE_URL = "https://canvas.ssu.ac.kr"
@@ -35,7 +38,7 @@ class CourseScraper:
         username: str,
         password: str,
         headless: bool = True,
-        log_callback: Optional[Callable[[str], None]] = None,
+        log_callback: Callable[[str], None] | None = None,
     ):
         self.username = username
         self.password = password
@@ -133,14 +136,17 @@ class CourseScraper:
         if self._pw:
             await self._pw.stop()
 
-    async def fetch_courses(self) -> List[Course]:
+    async def fetch_courses(self) -> list[Course]:
         """대시보드에서 수강 과목 목록 추출"""
         if "canvas.ssu.ac.kr" not in self._page.url or "/courses/" in self._page.url:
             await self._page.goto(_DASHBOARD_URL, wait_until="networkidle")
 
-        raw = await self._page.evaluate(
-            "() => window.ENV && window.ENV.STUDENT_PLANNER_COURSES"
-        )
+        # 세션 만료 시 자동 재로그인
+        if "login" in self._page.url:
+            await self._ensure_session()
+            await self._page.goto(_DASHBOARD_URL, wait_until="networkidle")
+
+        raw = await self._page.evaluate("() => window.ENV && window.ENV.STUDENT_PLANNER_COURSES")
         if not raw:
             raise RuntimeError("과목 목록을 불러올 수 없습니다.")
 
@@ -157,19 +163,35 @@ class CourseScraper:
                 first, _, second = long_name.partition(" - ")
                 if first.strip() == second.strip():
                     long_name = first.strip()
-            courses.append(Course(
-                id=str(item["id"]),
-                long_name=long_name,
-                href=item.get("href", f"/courses/{item['id']}"),
-                term=term,
-                is_favorited=item.get("isFavorited", False),
-            ))
+            courses.append(
+                Course(
+                    id=str(item["id"]),
+                    long_name=long_name,
+                    href=item.get("href", f"/courses/{item['id']}"),
+                    term=term,
+                    is_favorited=item.get("isFavorited", False),
+                )
+            )
         return courses
+
+    async def _ensure_session(self) -> None:
+        """세션 만료 시 자동 재로그인을 시도한다."""
+        if "login" in self._page.url:
+            self._log("세션 만료 감지 — 자동 재로그인 중...")
+            ok = await ensure_logged_in(self._page, self.username, self.password)
+            if not ok:
+                raise RuntimeError("자동 재로그인 실패. 학번/비밀번호를 확인하세요.")
+            self._log("재로그인 완료")
 
     async def fetch_lectures(self, course: Course) -> CourseDetail:
         """과목의 주차별 강의 목록 스크래핑"""
         self._log(f"강의 목록 로딩: {course.long_name}")
         await self._page.goto(course.lectures_url, wait_until="networkidle")
+
+        # 세션 만료로 로그인 페이지로 리디렉트된 경우 재로그인 후 재시도
+        if "login" in self._page.url:
+            await self._ensure_session()
+            await self._page.goto(course.lectures_url, wait_until="networkidle")
 
         iframe_el = await self._page.wait_for_selector("iframe#tool_content", timeout=15000)
         iframe = await iframe_el.content_frame()
@@ -193,9 +215,10 @@ class CourseScraper:
         weeks = await self._parse_weeks(iframe)
         return CourseDetail(course=course, course_name=course_name, professors=professors, weeks=weeks)
 
-    async def _parse_weeks(self, iframe: Frame) -> List[Week]:
+    async def _parse_weeks(self, iframe: Frame) -> list[Week]:
         module_list = await iframe.query_selector(".xnmb-module-list")
         if not module_list:
+            self._log("강의 목록을 찾을 수 없습니다 (.xnmb-module-list). LMS 구조가 변경되었을 수 있습니다.")
             return []
 
         top_divs = await module_list.query_selector_all(":scope > div")
@@ -209,7 +232,7 @@ class CourseScraper:
             title = (await title_el.text_content()).strip() if title_el else ""
 
             week_num = len(weeks) + 1
-            match = re.search(r'(\d+)주차', title)
+            match = re.search(r"(\d+)주차", title)
             if match:
                 week_num = int(match.group(1))
 
@@ -223,7 +246,7 @@ class CourseScraper:
             weeks.append(Week(title=title, week_number=week_num, lectures=lectures))
         return weeks
 
-    async def _parse_item(self, el) -> Optional[LectureItem]:
+    async def _parse_item(self, el) -> LectureItem | None:
         icon_el = await el.query_selector("i.xnmb-module_item-icon")
         lecture_type = LectureType.OTHER
         if icon_el:
@@ -255,7 +278,7 @@ class CourseScraper:
             spans = await periods_el.query_selector_all("span")
             for span in reversed(spans):
                 text = (await span.text_content() or "").strip()
-                if re.match(r'^\d+:\d+$', text):
+                if re.match(r"^\d+:\d+$", text):
                     duration = text
                     break
 

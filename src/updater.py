@@ -1,26 +1,25 @@
 """Docker Hub에서 최신 이미지 태그를 조회해 현재 버전과 비교한다."""
+
 import re
-from typing import Optional
 
 _DOCKERHUB_TAGS_URL = (
-    "https://hub.docker.com/v2/repositories/igor0670/study-helper/tags"
-    "?page_size=25&ordering=last_updated"
+    "https://hub.docker.com/v2/repositories/igor0670/study-helper/tags?page_size=25&ordering=last_updated"
 )
 _VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 
 
-def _parse_version(tag: str) -> Optional[tuple[int, ...]]:
+def _parse_version(tag: str) -> tuple[int, ...] | None:
     m = _VERSION_RE.match(tag)
     if m:
         return tuple(int(x) for x in m.group(1).split("."))
     return None
 
 
-def fetch_latest_version(timeout: float = 5.0) -> Optional[str]:
+def fetch_latest_version(timeout: float = 5.0) -> str | None:
     """Docker Hub에서 최신 버전 태그를 반환한다. 실패 시 None."""
     try:
-        import urllib.request
         import json
+        import urllib.request
 
         req = urllib.request.Request(
             _DOCKERHUB_TAGS_URL,
@@ -29,8 +28,8 @@ def fetch_latest_version(timeout: float = 5.0) -> Optional[str]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
 
-        best: Optional[tuple[int, ...]] = None
-        best_tag: Optional[str] = None
+        best: tuple[int, ...] | None = None
+        best_tag: str | None = None
         for result in data.get("results", []):
             tag = result.get("name", "")
             parsed = _parse_version(tag)
@@ -45,7 +44,7 @@ def fetch_latest_version(timeout: float = 5.0) -> Optional[str]:
         return None
 
 
-def check_update(current_version: str) -> Optional[str]:
+def check_update(current_version: str) -> str | None:
     """
     최신 버전이 현재 버전보다 높으면 최신 버전 문자열을 반환한다.
     같거나 낮으면 None. 조회 실패 시에도 None.

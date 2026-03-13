@@ -12,8 +12,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-from src.config import Config, _default_download_dir
-from src.summarizer.summarizer import GEMINI_MODEL_IDS, GEMINI_MODEL_LABELS, GEMINI_DEFAULT_MODEL
+from src.config import Config
+from src.summarizer.summarizer import GEMINI_DEFAULT_MODEL, GEMINI_MODEL_IDS, GEMINI_MODEL_LABELS
 
 console = Console()
 
@@ -26,11 +26,13 @@ def run_settings() -> None:
     최초 실행 또는 'setting' 입력 시 호출된다.
     """
     console.clear()
-    console.print(Panel(
-        Text("설정", justify="center", style="bold cyan"),
-        border_style="cyan",
-        padding=(0, 4),
-    ))
+    console.print(
+        Panel(
+            Text("설정", justify="center", style="bold cyan"),
+            border_style="cyan",
+            padding=(0, 4),
+        )
+    )
     console.print()
     console.print("  [dim]Enter를 누르면 현재 값(또는 기본값)을 유지합니다.[/dim]")
     console.print()
@@ -80,13 +82,30 @@ def run_settings() -> None:
         stt_enabled = stt_choice == "y"
 
         if stt_enabled:
+            # STT 언어 설정
+            _print_section("  STT 언어")
+            console.print("  [dim]ko: 한국어 고정 / en: 영어 고정 / auto: 자동 감지[/dim]")
+            _lang_current = Config.STT_LANGUAGE or "ko"
+            _lang_default = _lang_current if _lang_current in ("ko", "en", "auto") else "ko"
+            lang_choice = Prompt.ask(
+                "  STT 언어", choices=["ko", "en", "auto"], default=_lang_default, show_choices=True
+            )
+            stt_language = "" if lang_choice == "auto" else lang_choice
+            Config.STT_LANGUAGE = stt_language
+            Config._save_env({"STT_LANGUAGE": stt_language})
+            console.print()
+
             _print_section("  Whisper 모델 크기")
             console.print("  [dim]작을수록 빠르지만 정확도 낮음 (기본: base)[/dim]")
             for i, m in enumerate(_WHISPER_MODELS, 1):
                 console.print(f"  [bold]{i}.[/bold] {m}")
             console.print()
-            _model_default = str(_WHISPER_MODELS.index(Config.WHISPER_MODEL) + 1) if Config.WHISPER_MODEL in _WHISPER_MODELS else "2"
-            model_choice = Prompt.ask("  모델 선택", choices=[str(i) for i in range(1, 6)], default=_model_default, show_choices=False)
+            _model_default = (
+                str(_WHISPER_MODELS.index(Config.WHISPER_MODEL) + 1) if Config.WHISPER_MODEL in _WHISPER_MODELS else "2"
+            )
+            model_choice = Prompt.ask(
+                "  모델 선택", choices=[str(i) for i in range(1, 6)], default=_model_default, show_choices=False
+            )
             Config.WHISPER_MODEL = _WHISPER_MODELS[int(model_choice) - 1]
             Config._save_env({"WHISPER_MODEL": Config.WHISPER_MODEL})
         console.print()
@@ -104,6 +123,7 @@ def run_settings() -> None:
     ai_agent = "gemini"
     api_key = ""
     gemini_model = Config.GEMINI_MODEL or GEMINI_DEFAULT_MODEL
+    summary_prompt_extra = Config.SUMMARY_PROMPT_EXTRA
 
     if ai_enabled:
         # 3.1. Gemini API 키
@@ -119,7 +139,7 @@ def run_settings() -> None:
         api_key = raw_key if raw_key else _existing_key
         console.print()
 
-        # API 키가 있을 때만 모델 선택
+        # API 키가 있을 때만 모델/프롬프트 선택
         if api_key:
             # 3.2. Gemini 모델 선택
             _print_section("3.2. Gemini 모델 선택")
@@ -130,7 +150,9 @@ def run_settings() -> None:
             console.print()
 
             _current_model = Config.GEMINI_MODEL or GEMINI_DEFAULT_MODEL
-            _model_default = str(GEMINI_MODEL_IDS.index(_current_model) + 1) if _current_model in GEMINI_MODEL_IDS else "1"
+            _model_default = (
+                str(GEMINI_MODEL_IDS.index(_current_model) + 1) if _current_model in GEMINI_MODEL_IDS else "1"
+            )
             model_choice = Prompt.ask(
                 "  모델 선택",
                 choices=[str(i) for i in range(1, len(GEMINI_MODEL_IDS) + 1)],
@@ -138,6 +160,25 @@ def run_settings() -> None:
                 show_choices=False,
             )
             gemini_model = GEMINI_MODEL_IDS[int(model_choice) - 1]
+            console.print()
+
+            # 3.3. 추가 요약 지시사항
+            _print_section("3.3. 추가 요약 지시사항")
+            console.print("  [dim]기본 요약 형식에 추가할 지시사항을 입력하세요.[/dim]")
+            console.print("  [dim]예: '영어 용어는 원문 그대로 표기해줘', '코드 예시도 포함해줘'[/dim]")
+            if Config.SUMMARY_PROMPT_EXTRA:
+                console.print(
+                    f"  [dim]현재값: {Config.SUMMARY_PROMPT_EXTRA[:60]}{'...' if len(Config.SUMMARY_PROMPT_EXTRA) > 60 else ''}[/dim]"
+                )
+                console.print("  [dim]비우려면 'clear'를 입력하세요.[/dim]")
+            console.print()
+            raw_extra = Prompt.ask("  추가 지시사항", default="").strip()
+            if raw_extra.lower() == "clear":
+                summary_prompt_extra = ""
+            elif raw_extra:
+                summary_prompt_extra = raw_extra
+            else:
+                summary_prompt_extra = Config.SUMMARY_PROMPT_EXTRA
             console.print()
 
     # ── 4. 텔레그램 알림 ─────────────────────────────────────────
@@ -181,6 +222,7 @@ def run_settings() -> None:
         if tg_token and tg_chat_id:
             console.print("  [dim]연결 테스트 중...[/dim]")
             from src.notifier.telegram_notifier import verify_bot
+
             ok, err = verify_bot(tg_token, tg_chat_id)
             if ok:
                 console.print("  [bold green]텔레그램 연결 성공! 테스트 메시지를 확인하세요.[/bold green]")
@@ -206,6 +248,7 @@ def run_settings() -> None:
         ai_agent=ai_agent,
         api_key=api_key,
         gemini_model=gemini_model,
+        summary_prompt_extra=summary_prompt_extra,
     )
     Config.save_telegram(
         enabled=tg_enabled,
@@ -216,7 +259,9 @@ def run_settings() -> None:
 
     console.print("  [bold green]설정이 저장되었습니다.[/bold green]")
     console.print()
-    _print_summary(download_dir, download_rule, stt_enabled, ai_enabled, gemini_model if ai_enabled and api_key else "", tg_enabled)
+    _print_summary(
+        download_dir, download_rule, stt_enabled, ai_enabled, gemini_model if ai_enabled and api_key else "", tg_enabled
+    )
     console.print()
     Prompt.ask("  [dim]Enter를 눌러 계속[/dim]", default="")
 
@@ -226,11 +271,18 @@ def _print_section(title: str) -> None:
     console.print()
 
 
-def _print_summary(download_dir: str, download_rule: str,
-                   stt_enabled: bool, ai_enabled: bool, gemini_model: str,
-                   tg_enabled: bool = False) -> None:
+def _print_summary(
+    download_dir: str,
+    download_rule: str,
+    stt_enabled: bool,
+    ai_enabled: bool,
+    gemini_model: str,
+    tg_enabled: bool = False,
+) -> None:
     """설정 요약을 표시한다."""
-    rule_label = {"video": "영상만 (mp4)", "audio": "음성만 (mp3)", "both": "영상 + 음성"}.get(download_rule, download_rule)
+    rule_label = {"video": "영상만 (mp4)", "audio": "음성만 (mp3)", "both": "영상 + 음성"}.get(
+        download_rule, download_rule
+    )
     console.print("  [dim]─────────────────────────────[/dim]")
     console.print(f"  다운로드 경로  : [cyan]{download_dir}[/cyan]")
     console.print(f"  다운로드 규칙  : [cyan]{rule_label}[/cyan]")

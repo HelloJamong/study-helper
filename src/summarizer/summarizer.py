@@ -40,11 +40,17 @@ _SUMMARY_PROMPT = """\
 {text}
 """
 
+_EXTRA_PROMPT_TEMPLATE = """
+
+추가 지시사항:
+{extra}
+"""
+
 _GEMINI_MODELS = [
     ("gemini-2.5-flash", "Gemini 2.5 Flash  (무료 티어 지원, 권장)"),
     ("gemini-2.0-flash", "Gemini 2.0 Flash  (무료 티어 지원)"),
     ("gemini-1.5-flash", "Gemini 1.5 Flash  (무료 티어 지원)"),
-    ("gemini-1.5-pro",   "Gemini 1.5 Pro    (유료)"),
+    ("gemini-1.5-pro", "Gemini 1.5 Pro    (유료)"),
 ]
 
 # 외부에서 모델 목록 참조용
@@ -53,15 +59,16 @@ GEMINI_MODEL_LABELS = [m[1] for m in _GEMINI_MODELS]
 GEMINI_DEFAULT_MODEL = GEMINI_MODEL_IDS[0]
 
 
-def summarize(txt_path: Path, agent: str, api_key: str, model: str) -> Path:
+def summarize(txt_path: Path, agent: str, api_key: str, model: str, extra_prompt: str = "") -> Path:
     """
     텍스트 파일을 AI로 요약한다.
 
     Args:
-        txt_path: STT 결과 .txt 파일 경로
-        agent:    "gemini" 또는 "openai"
-        api_key:  해당 에이전트 API 키
-        model:    사용할 모델 ID
+        txt_path:     STT 결과 .txt 파일 경로
+        agent:        "gemini" 또는 "openai"
+        api_key:      해당 에이전트 API 키
+        model:        사용할 모델 ID
+        extra_prompt: 사용자 추가 지시사항 (기본 프롬프트 뒤에 추가)
 
     Returns:
         생성된 _summarized.txt 파일 경로
@@ -71,6 +78,8 @@ def summarize(txt_path: Path, agent: str, api_key: str, model: str) -> Path:
         raise ValueError("텍스트 파일이 비어 있습니다.")
 
     prompt = _SUMMARY_PROMPT.format(text=text)
+    if extra_prompt:
+        prompt += _EXTRA_PROMPT_TEMPLATE.format(extra=extra_prompt)
 
     if agent == "gemini":
         summary = _summarize_gemini(api_key, model, prompt)
@@ -89,10 +98,7 @@ def _summarize_gemini(api_key: str, model: str, prompt: str) -> str:
         from google import genai
         from google.genai import types
     except ImportError:
-        raise RuntimeError(
-            "google-genai 패키지가 설치되어 있지 않습니다.\n"
-            "설치: pip install google-genai"
-        )
+        raise RuntimeError("google-genai 패키지가 설치되어 있지 않습니다.\n설치: pip install google-genai") from None
 
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
@@ -109,10 +115,7 @@ def _summarize_openai(api_key: str, model: str, prompt: str) -> str:
     try:
         from openai import OpenAI
     except ImportError:
-        raise RuntimeError(
-            "openai 패키지가 설치되어 있지 않습니다.\n"
-            "설치: pip install openai"
-        )
+        raise RuntimeError("openai 패키지가 설치되어 있지 않습니다.\n설치: pip install openai") from None
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(

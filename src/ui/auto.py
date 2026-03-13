@@ -6,9 +6,10 @@
 """
 
 import asyncio
+import json
 import sys
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -19,13 +20,35 @@ from src.config import Config
 
 console = Console()
 
+# 자동 모드 진행 상태 파일
+_PROGRESS_FILE = Path("/data/auto_progress.json") if Path("/data").exists() else Path("data/auto_progress.json")
+
 _KST = timezone(timedelta(hours=9))
 
 # 기본 스케줄 (KST 시각, 정각)
 _DEFAULT_SCHEDULE_HOURS = [9, 13, 18, 23]
 
 
-def _check_auto_prerequisites() -> List[str]:
+def _load_progress() -> set[str]:
+    """처리 완료된 강의 URL 목록을 로드한다."""
+    try:
+        if _PROGRESS_FILE.exists():
+            return set(json.loads(_PROGRESS_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_progress(completed: set[str]) -> None:
+    """처리 완료된 강의 URL 목록을 저장한다."""
+    try:
+        _PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PROGRESS_FILE.write_text(json.dumps(sorted(completed)), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _check_auto_prerequisites() -> list[str]:
     """자동 모드 필수 조건을 확인하고 미충족 항목 목록을 반환한다."""
     issues = []
     if Config.STT_ENABLED != "true":
@@ -42,13 +65,10 @@ def _check_auto_prerequisites() -> List[str]:
     return issues
 
 
-def _next_schedule_time(schedule_hours: List[int]) -> datetime:
+def _next_schedule_time(schedule_hours: list[int]) -> datetime:
     """다음 스케줄 실행 시각(KST)을 반환한다."""
     now = datetime.now(_KST)
-    today_schedules = [
-        now.replace(hour=h, minute=0, second=0, microsecond=0)
-        for h in sorted(schedule_hours)
-    ]
+    today_schedules = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in sorted(schedule_hours)]
     for t in today_schedules:
         if t > now:
             return t
@@ -71,7 +91,7 @@ def _fmt_remaining(target: datetime) -> str:
     return f"{s}초"
 
 
-def _configure_schedule() -> List[int]:
+def _configure_schedule() -> list[int]:
     """
     스케줄 설정 UI를 표시하고 선택된 시각 목록을 반환한다.
     Enter를 누르면 기본값(09/13/18/23시)을 사용한다.
@@ -111,20 +131,25 @@ async def run_auto_mode(scraper, courses, details) -> None:
     # ── 필수 조건 체크 ────────────────────────────────────────────
     issues = _check_auto_prerequisites()
     if issues:
-        console.print(Panel(
-            Text("자동 모드", justify="center", style="bold cyan"),
-            border_style="cyan",
-            padding=(0, 4),
-        ))
+        console.print(
+            Panel(
+                Text("자동 모드", justify="center", style="bold cyan"),
+                border_style="cyan",
+                padding=(0, 4),
+            )
+        )
         console.print()
         console.print("  [bold yellow]자동 모드 실행을 위한 필수 조건이 만족하지 않았습니다.[/bold yellow]")
         console.print()
         for issue in issues:
             console.print(f"  [red]✗[/red] {issue}")
         console.print()
-        go_settings = Prompt.ask("  설정 페이지로 이동하시겠습니까?", choices=["y", "n"], default="y", show_choices=True)
+        go_settings = Prompt.ask(
+            "  설정 페이지로 이동하시겠습니까?", choices=["y", "n"], default="y", show_choices=True
+        )
         if go_settings == "y":
             from src.ui.settings import run_settings
+
             run_settings()
         return
 
@@ -133,11 +158,13 @@ async def run_auto_mode(scraper, courses, details) -> None:
 
     # ── 자동 모드 루프 ────────────────────────────────────────────
     console.clear()
-    console.print(Panel(
-        Text("자동 모드", justify="center", style="bold cyan"),
-        border_style="cyan",
-        padding=(0, 4),
-    ))
+    console.print(
+        Panel(
+            Text("자동 모드", justify="center", style="bold cyan"),
+            border_style="cyan",
+            padding=(0, 4),
+        )
+    )
     console.print()
     console.print(f"  스케줄: KST {', '.join(f'{h:02d}:00' for h in schedule_hours)}")
     console.print()
@@ -196,19 +223,21 @@ async def run_auto_mode(scraper, courses, details) -> None:
             # 강의 목록 새로고침
             try:
                 from src.ui.courses import _reload_details
+
                 details = await _reload_details(scraper, courses)
             except Exception as e:
                 console.print(f"  [red]강의 목록 갱신 실패: {e}[/red]")
                 await asyncio.sleep(60)
                 continue
 
-            # 과목별 미시청 강의 수집
-            pending_list: List[Tuple] = []  # (course, lec)
-            for course, detail in zip(courses, details):
+            # 과목별 미시청 강의 수집 (이미 처리된 강의는 건너뜀)
+            completed = _load_progress()
+            pending_list: list[tuple] = []  # (course, lec)
+            for course, detail in zip(courses, details, strict=False):
                 if detail is None:
                     continue
                 for lec in detail.all_video_lectures:
-                    if lec.needs_watch:
+                    if lec.needs_watch and lec.full_url not in completed:
                         pending_list.append((course, lec))
 
             if not pending_list:
@@ -222,7 +251,10 @@ async def run_auto_mode(scraper, courses, details) -> None:
             for course, lec in pending_list:
                 if stop_event.is_set():
                     break
-                await _process_lecture(scraper, course, lec, stop_event)
+                success = await _process_lecture(scraper, course, lec, stop_event)
+                if success:
+                    completed.add(lec.full_url)
+                    _save_progress(completed)
 
             console.print()
             console.print("  [bold green]이번 스케줄 처리 완료.[/bold green]")
@@ -240,13 +272,16 @@ async def run_auto_mode(scraper, courses, details) -> None:
     console.print()
 
 
-async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> None:
+async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> bool:
     """
     단일 강의에 대해 재생 → 다운로드 → STT → AI 요약 → 텔레그램 알림을 처리한다.
     오류 발생 시 텔레그램으로 알림을 보내고 다음 강의로 넘어간다.
+
+    Returns:
+        True: 재생+다운로드 모두 성공 / False: 실패
     """
-    from src.ui.player import run_player
     from src.ui.download import run_download
+    from src.ui.player import run_player
 
     label = f"[{course.long_name}] {lec.title}"
     now_str = datetime.now(_KST).strftime("%H:%M:%S")
@@ -260,16 +295,16 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> N
             err_msg = "재생 오류" if has_error else "재생 미완료"
             console.print(f"  [yellow]  → {err_msg}: {label}[/yellow]")
             _tg_error_notify(course, lec, err_msg)
-            return
+            return False
         lec.completion = "completed"
         console.print("  [dim]  → 재생 완료[/dim]")
     except Exception as e:
         console.print(f"  [red]  → 재생 실패: {e}[/red]")
         _tg_error_notify(course, lec, f"재생 실패: {e}")
-        return
+        return False
 
     if stop_event.is_set():
-        return
+        return False
 
     # ── 다운로드 ──────────────────────────────────────────────────
     rule = Config.DOWNLOAD_RULE or "both"
@@ -281,15 +316,16 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> N
         if not ok:
             console.print(f"  [yellow]  → 다운로드 실패: {label}[/yellow]")
             # run_download 내부에서 이미 텔레그램 알림 처리됨
-            return
+            return False
         console.print("  [dim]  → 다운로드 완료[/dim]")
     except Exception as e:
         console.print(f"  [red]  → 다운로드 실패: {e}[/red]")
         _tg_error_notify(course, lec, f"다운로드 실패: {e}")
-        return
+        return False
 
     console.print(f"  [bold green]  → {label} 완료[/bold green]")
     console.print()
+    return True
 
 
 def _tg_error_notify(course, lec, error_msg: str) -> None:
@@ -302,6 +338,7 @@ def _tg_error_notify(course, lec, error_msg: str) -> None:
         return
     try:
         from src.notifier.telegram_notifier import notify_auto_error
+
         notify_auto_error(token, chat_id, course.long_name, lec.week_label, lec.title, error_msg)
     except Exception:
         pass

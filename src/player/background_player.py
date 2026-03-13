@@ -15,18 +15,17 @@ LMS가 수강 완료로 인식하도록 실제 재생 시간을 유지한다.
 import asyncio
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
-from playwright.async_api import Page, Frame
-
+from playwright.async_api import Frame, Page
 
 # ── 상수 ─────────────────────────────────────────────────────────
-_POLL_INTERVAL = 1.0          # 진행 폴링 주기 (초)
-_FRAME_FIND_TIMEOUT = 30      # iframe 탐색 최대 대기 (초)
-_PLAY_TIMEOUT = 20            # 재생 버튼/영상 시작 대기 (초)
-_END_THRESHOLD = 3            # 영상 끝 판정 여유 (초)
+_POLL_INTERVAL = 1.0  # 진행 폴링 주기 (초)
+_FRAME_FIND_TIMEOUT = 30  # iframe 탐색 최대 대기 (초)
+_PLAY_TIMEOUT = 20  # 재생 버튼/영상 시작 대기 (초)
+_END_THRESHOLD = 3  # 영상 끝 판정 여유 (초)
 _RESUME_BTN = ".confirm-ok-btn"
 _RESTART_BTN = ".confirm-cancel-btn"
 _DIALOG_SEL = ".confirm-msg-box"
@@ -36,15 +35,16 @@ _VIDEO_SEL = "video.vc-vplay-video1"
 
 @dataclass
 class PlaybackState:
-    current: float = 0.0   # 현재 재생 위치 (초)
+    current: float = 0.0  # 현재 재생 위치 (초)
     duration: float = 0.0  # 전체 길이 (초)
     ended: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────
 
-async def _find_player_frame(page: Page) -> Optional[Frame]:
+
+async def _find_player_frame(page: Page) -> Frame | None:
     """
     tool_content 아래 commons.ssu.ac.kr frame을 찾는다.
     재생 버튼이 있는 초기 플레이어 선택 화면 frame.
@@ -54,15 +54,17 @@ async def _find_player_frame(page: Page) -> Optional[Frame]:
         outer = page.frame(name="tool_content")
         if outer:
             for frame in page.frames:
-                if (frame.parent_frame == outer
-                        and "commons.ssu.ac.kr" in frame.url
-                        and "flashErrorPage" not in frame.url):
+                if (
+                    frame.parent_frame == outer
+                    and "commons.ssu.ac.kr" in frame.url
+                    and "flashErrorPage" not in frame.url
+                ):
                     return frame
         await asyncio.sleep(1)
     return None
 
 
-async def _find_video_frame(page: Page) -> Optional[Frame]:
+async def _find_video_frame(page: Page) -> Frame | None:
     """
     실제 video 태그가 있는 frame을 찾는다.
     재생 버튼 클릭 후 page 전체를 재스캔한다.
@@ -76,9 +78,7 @@ async def _find_video_frame(page: Page) -> Optional[Frame]:
             if "commons.ssu.ac.kr" not in frame.url:
                 continue
             try:
-                count = await frame.evaluate(
-                    "() => document.querySelectorAll('video').length"
-                )
+                count = await frame.evaluate("() => document.querySelectorAll('video').length")
                 if count > 0:
                     return frame
             except Exception:
@@ -116,7 +116,7 @@ async def _click_play(frame: Frame) -> bool:
     return False
 
 
-async def _get_video_state(frame: Frame) -> Optional[dict]:
+async def _get_video_state(frame: Frame) -> dict | None:
     """video 요소의 현재 상태(currentTime, duration, ended, paused)를 반환한다."""
     try:
         return await frame.evaluate(f"""() => {{
@@ -158,13 +158,30 @@ async def _create_fake_webm(duration_sec: float) -> bytes:
         output_path = os.path.join(tmpdir, "fake.webm")
         dur = str(int(duration_sec) + 2)
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "color=black:s=2x2:r=1",
-            "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono",
-            "-t", dur,
-            "-c:v", "libvpx", "-b:v", "1k",
-            "-c:a", "libopus", "-b:a", "8k",
-            "-map", "0:v", "-map", "1:a",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:s=2x2:r=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=8000:cl=mono",
+            "-t",
+            dur,
+            "-c:v",
+            "libvpx",
+            "-b:v",
+            "1k",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "8k",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
             output_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
@@ -177,6 +194,7 @@ async def _create_fake_webm(duration_sec: float) -> bytes:
 
 
 # ── 진도 API 직접 호출 (Plan B) ──────────────────────────────────
+
 
 def _parse_player_url(player_url: str) -> dict:
     """
@@ -212,7 +230,8 @@ async def _call_progress_jsonp(frame: Frame, report_url: str, callback: str) -> 
     실제 플레이어(uni-player.min.js)와 동일하게 commons.ssu.ac.kr origin에서
     canvas.ssu.ac.kr progress 엔드포인트를 호출함으로써 ErrAlreadyInView를 우회한다.
     """
-    result = await frame.evaluate("""
+    result = await frame.evaluate(
+        """
         (args) => new Promise((resolve) => {
             var url = args[0];
             var cbName = args[1];
@@ -232,7 +251,9 @@ async def _call_progress_jsonp(frame: Frame, report_url: str, callback: str) -> 
                 resolve(JSON.stringify({error: 'timeout'}));
             }, 10000);
         })
-    """, [report_url, callback])
+    """,
+        [report_url, callback],
+    )
     return result
 
 
@@ -241,7 +262,7 @@ async def _report_completion(
     player_url: str,
     duration: float,
     log: Callable,
-    commons_frame: Optional[Frame] = None,
+    commons_frame: Frame | None = None,
     use_page_eval: bool = False,
 ):
     """
@@ -290,60 +311,69 @@ async def _report_completion(
         )
         return url, cb
 
-    log(f"  [완료 보고] 100% 진도 직접 전송 (duration={duration:.1f}s)")
+    for attempt in range(3):
+        if attempt > 0:
+            log(f"  [완료 보고] 재시도 {attempt + 1}/3 (2초 대기 후)")
+            await asyncio.sleep(2)
 
-    # Plan A: page.evaluate fetch (canvas.ssu.ac.kr 동일 오리진 — sl=1 세션 중에도 동작)
-    if use_page_eval:
-        report_url, _ = _build_url()
-        try:
-            result = await page.evaluate(f"""
-                async () => {{
-                    try {{
-                        const resp = await fetch({json.dumps(report_url)});
-                        return {{s: resp.status, b: (await resp.text()).slice(0, 300)}};
-                    }} catch(e) {{
-                        return {{s: -1, b: e.message}};
+        log(f"  [완료 보고] 100% 진도 직접 전송 (duration={duration:.1f}s)")
+
+        # Plan A: page.evaluate fetch (canvas.ssu.ac.kr 동일 오리진 — sl=1 세션 중에도 동작)
+        if use_page_eval:
+            report_url, _ = _build_url()
+            try:
+                result = await page.evaluate(f"""
+                    async () => {{
+                        try {{
+                            const resp = await fetch({json.dumps(report_url)});
+                            return {{s: resp.status, b: (await resp.text()).slice(0, 300)}};
+                        }} catch(e) {{
+                            return {{s: -1, b: e.message}};
+                        }}
                     }}
-                }}
-            """)
-            status = result.get("s")
-            body = result.get("b", "")
-            log(f"  [완료 보고] page ctx fetch: {status}  body={body!r}")
-            if status == 200 and '"result":true' in body:
-                return
-            log(f"  [완료 보고] page ctx fetch 실패 ({status}) — page.request.get으로 폴백")
-        except Exception as e:
-            log(f"  [완료 보고] page ctx fetch 오류: {e}")
+                """)
+                status = result.get("s")
+                body = result.get("b", "")
+                log(f"  [완료 보고] page ctx fetch: {status}  body={body!r}")
+                if status == 200 and '"result":true' in body:
+                    return
+                log(f"  [완료 보고] page ctx fetch 실패 ({status}) — page.request.get으로 폴백")
+            except Exception as e:
+                log(f"  [완료 보고] page ctx fetch 오류: {e}")
 
-    # Plan B: commons_frame JSONP (sl=0 세션 — ErrAlreadyInView 우회)
-    elif commons_frame:
-        report_url, callback = _build_url()
+        # Plan B: commons_frame JSONP (sl=0 세션 — ErrAlreadyInView 우회)
+        elif commons_frame:
+            report_url, callback = _build_url()
+            try:
+                body = await _call_progress_jsonp(commons_frame, report_url, callback)
+                log(f"  [완료 보고] JSONP 응답: {body[:200]!r}")
+                if '"result":true' in body:
+                    return
+                log("  [완료 보고] JSONP 결과 false — page.request.get으로 폴백")
+            except Exception as e:
+                log(f"  [완료 보고] JSONP 실패 ({e}) — page.request.get으로 폴백")
+
+        # 폴백: page.request.get
+        report_url_fb, _ = _build_url()
         try:
-            body = await _call_progress_jsonp(commons_frame, report_url, callback)
-            log(f"  [완료 보고] JSONP 응답: {body[:200]!r}")
+            response = await page.request.get(
+                report_url_fb,
+                headers={"Referer": "https://commons.ssu.ac.kr/"},
+            )
+            body = await response.text()
+            log(f"  [완료 보고] request.get 응답: {response.status}  body={body[:200]!r}")
             if '"result":true' in body:
                 return
-            log("  [완료 보고] JSONP 결과 false — page.request.get으로 폴백")
         except Exception as e:
-            log(f"  [완료 보고] JSONP 실패 ({e}) — page.request.get으로 폴백")
+            log(f"  [완료 보고] request.get 실패: {e}")
 
-    # 폴백: page.request.get
-    report_url_fb, _ = _build_url()
-    try:
-        response = await page.request.get(
-            report_url_fb,
-            headers={"Referer": "https://commons.ssu.ac.kr/"},
-        )
-        body = await response.text()
-        log(f"  [완료 보고] request.get 응답: {response.status}  body={body[:200]!r}")
-    except Exception as e:
-        log(f"  [완료 보고] request.get 실패: {e}")
+    log("  [완료 보고] 3회 시도 모두 실패 — 출석이 인정되지 않았을 수 있습니다")
 
 
 async def _play_via_learningx_api(
     page: Page,
     learningx_url: str,
-    on_progress: Optional[Callable[[PlaybackState], None]],
+    on_progress: Callable[[PlaybackState], None] | None,
     log: Callable,
     fallback_duration: float = 0.0,
 ) -> PlaybackState:
@@ -423,7 +453,10 @@ async def _play_via_learningx_api(
     log(f"  [LX] duration={duration:.1f}s — Plan B로 전환")
 
     return await _play_via_progress_api(
-        page, viewer_url, on_progress, log,
+        page,
+        viewer_url,
+        on_progress,
+        log,
         fallback_duration=duration if duration > 0 else fallback_duration,
     )
 
@@ -431,7 +464,7 @@ async def _play_via_learningx_api(
 async def _play_via_progress_api(
     page: Page,
     player_url: str,
-    on_progress: Optional[Callable[[PlaybackState], None]],
+    on_progress: Callable[[PlaybackState], None] | None,
     log: Callable,
     fallback_duration: float = 0.0,
 ) -> PlaybackState:
@@ -472,7 +505,7 @@ async def _play_via_progress_api(
     # sl=0으로 재방문하면 세션 충돌 없이 진도 API를 호출할 수 있다.
     # 재로드 후 그 commons 프레임 내부에서 JSONP로 progress를 보고한다.
     sl0_url = player_url.replace("sl=1", "sl=0")
-    commons_frame: Optional[Frame] = None
+    commons_frame: Frame | None = None
     try:
         log(f"  [API] sl=0으로 commons 재로드: {sl0_url[:80]}...")
         await page.goto(sl0_url, wait_until="domcontentloaded", timeout=20000)
@@ -486,12 +519,12 @@ async def _play_via_progress_api(
     except Exception as e:
         log(f"  [API] commons 재로드 실패 ({e}) — page.request.get으로 폴백")
 
-    log(f"  [API] 진도 API 방식으로 재생 시뮬레이션")
+    log("  [API] 진도 API 방식으로 재생 시뮬레이션")
     log(f"  [API] duration={duration:.1f}s  progress_url={progress_url}")
 
     state.duration = duration
     current = 0.0
-    report_interval = 30.0   # 30초마다 진도 보고
+    report_interval = 30.0  # 30초마다 진도 보고
     next_report = report_interval
 
     # 총 페이지 수는 실제 요청에서 totalpage=15로 고정 (LMS 플레이어 기본값)
@@ -509,6 +542,7 @@ async def _play_via_progress_api(
         if current >= next_report or current >= duration:
             try:
                 import time
+
                 ts = int(time.time() * 1000)
                 callback = f"jQuery111_{ts}"
 
@@ -550,9 +584,9 @@ async def _play_via_progress_api(
                     )
                     body = await response.text()
                     log(f"  [API] 응답: {response.status}  body={body[:200]!r}")
+                next_report = current + report_interval
             except Exception as e:
-                log(f"  [API] 진도 보고 실패: {e}")
-            next_report = current + report_interval
+                log(f"  [API] 진도 보고 실패: {e} — 다음 폴링에서 재시도")
 
     state.ended = True
     if on_progress:
@@ -566,7 +600,8 @@ async def _play_via_progress_api(
 
 # ── 공개 API ─────────────────────────────────────────────────────
 
-async def _debug_page_state(page: Page, frame: Optional[Frame], log: Callable):
+
+async def _debug_page_state(page: Page, frame: Frame | None, log: Callable):
     """현재 페이지/프레임 상태를 상세 출력한다."""
     log(f"  [현재 URL] {page.url}")
     log(f"  [전체 프레임 수] {len(page.frames)}")
@@ -594,9 +629,11 @@ async def _debug_page_state(page: Page, frame: Optional[Frame], log: Callable):
             log(f"    frame[{i}] url={f.url}")
             log(f"      video 수={len(all_videos)}")
             for j, v in enumerate(all_videos):
-                log(f"      video[{j}] class={v['class']!r}  src={v['src'][:100]!r}  "
+                log(
+                    f"      video[{j}] class={v['class']!r}  src={v['src'][:100]!r}  "
                     f"readyState={v['readyState']}  duration={v['duration']}  "
-                    f"paused={v['paused']}  error={v['error']}")
+                    f"paused={v['paused']}  error={v['error']}"
+                )
             log(f"      body(첫 500자)={body_html!r}")
         except Exception as e:
             log(f"    frame[{i}] 조회 오류: {e}")
@@ -626,10 +663,10 @@ async def _debug_page_state(page: Page, frame: Optional[Frame], log: Callable):
 async def play_lecture(
     page: Page,
     lecture_url: str,
-    on_progress: Optional[Callable[[PlaybackState], None]] = None,
+    on_progress: Callable[[PlaybackState], None] | None = None,
     debug: bool = False,
     fallback_duration: float = 0.0,
-    log_fn: Optional[Callable] = None,
+    log_fn: Callable | None = None,
 ) -> PlaybackState:
     """
     강의 URL을 headless 브라우저로 재생한다.
@@ -699,6 +736,7 @@ async def play_lecture(
     _on_request = None
     _on_response = None
     if debug:
+
         def _on_request(request):
             url = request.url
             if "google-analytics" in url or "gtm" in url:
@@ -708,7 +746,14 @@ async def play_lecture(
                 if request.post_data:
                     log(f"  [SNIFF→REQ] body={request.post_data!r}")
 
-        _FULL_BODY_KEYWORDS = ("attendance_items", "content.php", "chapter.xml", "progress", "lessons", "lecture_attendance")
+        _FULL_BODY_KEYWORDS = (
+            "attendance_items",
+            "content.php",
+            "chapter.xml",
+            "progress",
+            "lessons",
+            "lecture_attendance",
+        )
 
         async def _on_response(response):
             url = response.url
@@ -729,9 +774,7 @@ async def play_lecture(
                 if response.status >= 400 and any(kw in url for kw in _FULL_BODY_KEYWORDS):
                     log(f"  [SNIFF←RES] body(4xx)={body!r}")
                 elif body:
-                    if any(kw in url for kw in _FULL_BODY_KEYWORDS):
-                        log(f"  [SNIFF←RES] body={body!r}")
-                    elif len(body) < 500:
+                    if any(kw in url for kw in _FULL_BODY_KEYWORDS) or len(body) < 500:
                         log(f"  [SNIFF←RES] body={body!r}")
 
         page.on("request", _on_request)
@@ -754,6 +797,32 @@ async def play_lecture(
             except Exception:
                 pass
 
+    try:
+        return await _play_lecture_inner(
+            page,
+            lecture_url,
+            on_progress,
+            debug,
+            fallback_duration,
+            log,
+            state,
+            _using_fake_video,
+        )
+    finally:
+        await _cleanup()
+
+
+async def _play_lecture_inner(
+    page: Page,
+    lecture_url: str,
+    on_progress: Callable[[PlaybackState], None] | None,
+    debug: bool,
+    fallback_duration: float,
+    log: Callable,
+    state: PlaybackState,
+    _using_fake_video: bool,
+) -> PlaybackState:
+    """play_lecture()의 실제 재생 로직. try-finally로 _cleanup() 보장을 위해 분리."""
     await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
     log(f"    → 현재 URL: {page.url}")
 
@@ -771,13 +840,9 @@ async def play_lecture(
         tool_frame = page.frame(name="tool_content")
         if tool_frame and "learningx" in tool_frame.url:
             log(f"    → learningx 플레이어 감지: {tool_frame.url}")
-            await _cleanup()
-            return await _play_via_learningx_api(
-                page, tool_frame.url, on_progress, log, fallback_duration
-            )
+            return await _play_via_learningx_api(page, tool_frame.url, on_progress, log, fallback_duration)
 
         state.error = "비디오 프레임을 찾지 못했습니다."
-        await _cleanup()
         return state
     # frame이 나중에 navigate되면 URL이 바뀌므로 지금 즉시 저장
     player_url_snapshot = player_frame.url
@@ -800,7 +865,7 @@ async def play_lecture(
 
     # 5. 재생 버튼 클릭 후 video 태그가 있는 frame을 새로 탐색
     log("[5] video 태그가 있는 frame 재스캔 중 (재생 후 frame 구조 변경 대응)...")
-    log(f"    → 현재 전체 frame 목록:")
+    log("    → 현재 전체 frame 목록:")
     for f in page.frames:
         log(f"       name={f.name!r}  url={f.url}")
 
@@ -824,7 +889,6 @@ async def play_lecture(
     if not frame:
         log("    → video frame 없음. 진도 API 직접 호출 방식으로 전환...")
         log(f"    → player URL: {player_url_snapshot}")
-        await _cleanup()
         return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
     log(f"    → video frame 발견: {frame.url}")
 
@@ -842,7 +906,6 @@ async def play_lecture(
     else:
         log("[6] 타임아웃. 페이지 상태 진단:")
         await _debug_page_state(page, frame, log)
-        _cleanup()
         state.error = "영상이 시작되지 않았습니다."
         return state
 
@@ -920,12 +983,8 @@ async def play_lecture(
     _total_page: int = 14
     if _using_fake_video:
         try:
-            _lms_url = await frame.evaluate(
-                "() => typeof lms_url !== 'undefined' ? lms_url : ''"
-            )
-            _total_page = int(await frame.evaluate(
-                "() => typeof GetTotalPage !== 'undefined' ? GetTotalPage() : 14"
-            ))
+            _lms_url = await frame.evaluate("() => typeof lms_url !== 'undefined' ? lms_url : ''")
+            _total_page = int(await frame.evaluate("() => typeof GetTotalPage !== 'undefined' ? GetTotalPage() : 14"))
             log(f"[6.6] lms_url={_lms_url[:80]!r}... total_page={_total_page}")
         except Exception as e:
             log(f"[6.6] lms_url 추출 실패: {e}")
@@ -973,7 +1032,7 @@ async def play_lecture(
 
     # 7. 재생 완료까지 폴링
     log("[7] 재생 루프 시작")
-    _AFTER_UPDATE_INTERVAL = 30.0   # afterTimeUpdate 수동 호출 주기 (초)
+    _AFTER_UPDATE_INTERVAL = 30.0  # afterTimeUpdate 수동 호출 주기 (초)
     _last_after_update = asyncio.get_event_loop().time() - _AFTER_UPDATE_INTERVAL  # 즉시 첫 호출
     while True:
         info = await _get_video_state(frame)
@@ -1073,18 +1132,11 @@ async def play_lecture(
     # Plan A가 예상보다 훨씬 일찍 끝난 경우 (fake webm 고속 재생 등)
     # duration의 50% 미만에서 ended되면 Plan B로 전환해 progress API를 직접 호출한다.
     if state.ended and state.duration > 0 and state.current < state.duration * 0.5:
-        log(
-            f"[7] 영상이 예상보다 일찍 종료 ({state.current:.1f}s / {state.duration:.1f}s) "
-            f"— Plan B로 전환"
-        )
-        await _cleanup()
-        return await _play_via_progress_api(
-            page, player_url_snapshot, on_progress, log, fallback_duration
-        )
+        log(f"[7] 영상이 예상보다 일찍 종료 ({state.current:.1f}s / {state.duration:.1f}s) — Plan B로 전환")
+        return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
 
     # Plan A 완료 후 progress API에 100% 직접 보고
     # 플레이어 JS가 가짜 WebM 재생 중 progress API를 호출하지 않는 경우 대비
     await _report_completion(page, player_url_snapshot, state.duration, log, use_page_eval=True)
 
-    await _cleanup()
     return state

@@ -36,3 +36,8 @@ node_modules/
 .idea/
 .vscode/
 *.swp
+
+# Planning artifacts
+plan.md
+plan-*.md
+research.md

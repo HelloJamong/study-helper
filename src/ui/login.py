@@ -12,11 +12,13 @@ def show_login_screen() -> tuple[str, str]:
     비밀번호는 입력 시 마스킹 처리된다.
     """
     console.clear()
-    console.print(Panel(
-        Text("숭실대학교 LMS Study Helper", justify="center", style="bold cyan"),
-        border_style="cyan",
-        padding=(1, 4),
-    ))
+    console.print(
+        Panel(
+            Text("숭실대학교 LMS Study Helper", justify="center", style="bold cyan"),
+            border_style="cyan",
+            padding=(1, 4),
+        )
+    )
     console.print()
     console.print("  LMS 계정으로 로그인하세요.", style="dim")
     console.print()

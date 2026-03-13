@@ -5,11 +5,10 @@
 """
 
 from pathlib import Path
-from typing import Optional
 
 
 def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
-    """텔레그램 메시지를 전송한다. 성공 시 True 반환."""
+    """텔레그램 메시지를 전송한다. 응답 body의 ok 필드로 성공 여부를 판정한다."""
     import requests
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -19,13 +18,16 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
             json={"chat_id": chat_id, "text": text},
             timeout=10,
         )
-        return resp.ok
+        if resp.ok:
+            data = resp.json()
+            return data.get("ok", False)
+        return False
     except Exception:
         return False
 
 
 def _send_document(bot_token: str, chat_id: str, file_path: Path, caption: str = "") -> bool:
-    """텔레그램 파일을 전송한다. 성공 시 True 반환."""
+    """텔레그램 파일을 전송한다. 응답 body의 ok 필드로 성공 여부를 판정한다."""
     import requests
 
     url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
@@ -37,7 +39,10 @@ def _send_document(bot_token: str, chat_id: str, file_path: Path, caption: str =
                 files={"document": (file_path.name, f)},
                 timeout=60,
             )
-        return resp.ok
+        if resp.ok:
+            data = resp.json()
+            return data.get("ok", False)
+        return False
     except Exception:
         return False
 
@@ -137,7 +142,7 @@ def notify_summary_complete(
     lecture_title: str,
     summary_text: str,
     summary_path: Path,
-    auto_delete_files: Optional[list[Path]] = None,
+    auto_delete_files: list[Path] | None = None,
 ) -> bool:
     """AI 요약 완료 알림을 전송한다. 요약 내용을 메시지로, 파일도 함께 첨부한다.
     전송 성공 시 auto_delete_files에 포함된 파일을 삭제한다.
@@ -147,7 +152,7 @@ def notify_summary_complete(
 
     # 요약 내용 텍스트 메시지 전송 (4096자 초과 시 잘라서 전송)
     _MAX = 4096
-    chunks = [text[i:i + _MAX] for i in range(0, len(text), _MAX)]
+    chunks = [text[i : i + _MAX] for i in range(0, len(text), _MAX)]
     msg_ok = all(_send_message(bot_token, chat_id, chunk) for chunk in chunks)
 
     # 요약 파일 첨부 전송
@@ -200,10 +205,7 @@ def verify_bot(bot_token: str, chat_id: str) -> tuple[bool, str]:
     except Exception as e:
         return False, f"네트워크 오류: {e}"
 
-    ok = _send_message(
-        bot_token, chat_id,
-        f"[알림] study-helper 텔레그램 알림이 연결되었습니다! (봇: @{bot_name})"
-    )
+    ok = _send_message(bot_token, chat_id, f"[알림] study-helper 텔레그램 알림이 연결되었습니다! (봇: @{bot_name})")
     if not ok:
         return False, "메시지 전송 실패. Chat ID를 확인하세요."
 

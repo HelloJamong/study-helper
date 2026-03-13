@@ -1,26 +1,24 @@
 import asyncio
 import sys
-from typing import List, Optional
 
 from rich.console import Console
 from rich.live import Live
-from rich.spinner import Spinner
 from rich.text import Text
 
 from src.config import Config
 from src.scraper.course_scraper import CourseScraper
 from src.scraper.models import Course, CourseDetail
+from src.ui.courses import _AUTO_SENTINEL, LectureAction, show_course_list, show_week_list
+from src.ui.download import run_download
 from src.ui.login import (
-    show_login_screen,
-    show_login_progress,
     show_login_error,
+    show_login_progress,
+    show_login_screen,
     show_login_success,
 )
-from src.ui.courses import LectureAction, _AUTO_SENTINEL, show_course_list, show_week_list
-from src.updater import check_update
 from src.ui.player import run_player
-from src.ui.download import run_download
 from src.ui.settings import run_settings
+from src.updater import check_update
 
 console = Console()
 
@@ -30,12 +28,13 @@ _MAX_LOGIN_ATTEMPTS = 3
 async def run():
     # .env 파일이 없으면 빈 파일 생성 (볼륨 마운트 후 디렉토리가 생성되는 것 방지)
     from pathlib import Path
+
     env_path = Path(__file__).parent.parent / ".env"
     if not env_path.exists():
         env_path.touch()
 
     # ── 1. 인증 ──────────────────────────────────────────────────
-    scraper: Optional[CourseScraper] = None
+    scraper: CourseScraper | None = None
 
     # .env에 저장된 계정이 있으면 자동 로그인 시도
     if Config.has_credentials():
@@ -45,8 +44,7 @@ async def run():
         scraper = await _try_login(user_id, password)
         if scraper is None:
             show_login_error("저장된 계정으로 로그인 실패. 다시 입력해주세요.")
-            Config.LMS_USER_ID = ""
-            Config.LMS_PASSWORD = ""
+            # 자격증명을 삭제하지 않음 — 네트워크 오류일 수 있음
 
     # 로그인 실패 또는 저장된 계정 없으면 입력 받기
     attempts = 0
@@ -95,6 +93,7 @@ async def run():
 
         if selected is _AUTO_SENTINEL:
             from src.ui.auto import run_auto_mode
+
             await run_auto_mode(scraper, courses, details)
             continue
 
@@ -127,7 +126,7 @@ async def run():
     await scraper.close()
 
 
-async def _try_login(user_id: str, password: str) -> Optional[CourseScraper]:
+async def _try_login(user_id: str, password: str) -> CourseScraper | None:
     """CourseScraper로 로그인을 시도한다. 실패 시 None 반환."""
     scraper = CourseScraper(username=user_id, password=password)
     try:
@@ -149,6 +148,7 @@ async def _load_courses_task(scraper: CourseScraper):
 async def _check_update_compat():
     """버전 체크를 비동기 태스크로 실행한다. 실패 시 None 반환."""
     from src.config import APP_VERSION
+
     return check_update(APP_VERSION)
 
 
@@ -159,9 +159,9 @@ async def _load_courses(scraper: CourseScraper):
         console=console,
         transient=True,
     ):
-        courses: List[Course] = await scraper.fetch_courses()
+        courses: list[Course] = await scraper.fetch_courses()
 
-    details: List[Optional[CourseDetail]] = []
+    details: list[CourseDetail | None] = []
     for i, course in enumerate(courses, 1):
         with Live(
             Text(f"  강의 정보 로딩 중... ({i}/{len(courses)}) {course.long_name}", style="yellow"),
@@ -190,6 +190,7 @@ def _tg_notify_playback_complete(course_name: str, lec) -> None:
     if not token or not chat_id:
         return
     from src.notifier.telegram_notifier import notify_playback_complete
+
     notify_playback_complete(
         bot_token=token,
         chat_id=chat_id,
@@ -209,6 +210,7 @@ def _tg_notify_playback_error(course_name: str, lec, failed: bool = True) -> Non
     if not token or not chat_id:
         return
     from src.notifier.telegram_notifier import notify_playback_error
+
     notify_playback_error(
         bot_token=token,
         chat_id=chat_id,
