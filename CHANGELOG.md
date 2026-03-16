@@ -1,5 +1,28 @@
 # Changelog
 
+## [v1.1.3] - 2026-03-16
+
+### 추가
+- **마감 임박 텔레그램 알림**: 퀴즈, 과제, 토론 등 비디오 외 항목의 마감 24시간·12시간 전 텔레그램 알림 전송 (`src/notifier/deadline_checker.py` 신규)
+  - 중복 알림 방지: `deadline_notified.json`으로 전송 이력 관리
+  - 완료(completion)·출석(attendance)·예정(is_upcoming) 상태 항목은 알림 제외
+  - 연도 전환기(12월→1월, 1월→12월) 날짜 파싱 보정
+- **강의 상세 병렬 로딩**: `fetch_all_details(concurrency=3)`으로 전체 과목 강의 정보를 동시에 스크래핑하여 초기 로딩 속도 개선
+  - 병렬 재로그인 중복 방지 플래그(`_session_restored`) 추가
+  - 로딩 진행 상황 실시간 표시 (`강의 정보 병렬 로딩 중... N/총수`)
+- **다운로드 경로 구조화**: 저장 경로를 `과목명/N주차/강의명.mp4` 계층 구조로 변경 (기존: `과목명_강의명.mp4` 단일 파일)
+- **`Config.get_telegram_credentials()`**: 텔레그램 활성화 여부와 credential 유효성을 한 번에 검증하는 헬퍼 메서드 추가
+- **`KST` 공용 상수**: `config.py`에 KST 타임존 상수 추가, 여러 모듈에서 재사용
+
+### 수정
+- **Path Traversal 방어 강화**: `_sanitize_filename`에서 `..` 완전 제거(`re.sub`), `is_relative_to()`로 경로 경계 이중 검증
+- **이벤트 루프 블로킹 해소**: 버전 체크(`check_update`) 호출을 `run_in_executor`로 스레드풀에 위임하여 비동기 루프 블로킹 방지 (`get_event_loop()` → `get_running_loop()`)
+- **마감 알림 제외 조건 강화**: `completion` 외 `attendance`(출석/지각/면제), `is_upcoming`(예정) 상태도 알림 제외 처리
+- **`download.py` 텔레그램 오류 알림 통일**: `_tg_error` 함수를 `Config.get_telegram_credentials()` 방식으로 통일
+- **`auto.py` 진행 상태 저장/복원 에러 로깅**: `_load/_save_progress`에 예외 발생 시 로그 출력 추가
+
+---
+
 ## [v1.1.2] - 2026-03-13
 
 ### 추가
