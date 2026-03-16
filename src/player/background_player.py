@@ -210,7 +210,9 @@ def _parse_player_url(player_url: str) -> dict:
     parsed = urlparse(player_url)
     qs = parse_qs(parsed.query)
 
-    duration = float(qs.get("endat", ["0"])[0])
+    raw_endat = float(qs.get("endat", ["0"])[0])
+    # LMS가 duration 미확정 강의에 sentinel 값(-8888 등 음수)을 사용하는 경우 0으로 정규화
+    duration = max(raw_endat, 0.0)
     target_url = unquote(qs.get("TargetUrl", [""])[0])
 
     # content_id는 path의 마지막 세그먼트
@@ -493,10 +495,10 @@ async def _play_via_progress_api(
 
     if duration <= 0:
         if fallback_duration > 0:
-            log(f"  [API] endat 파라미터 없음 — LectureItem.duration 사용: {fallback_duration:.1f}s")
+            log(f"  [API] endat 미확정(endat=0 또는 sentinel 값) — fallback duration 사용: {fallback_duration:.1f}s")
             duration = fallback_duration
         else:
-            log("  [API] duration 파싱 실패 — URL에 endat 파라미터 없음, fallback도 없음")
+            log("  [API] duration 파싱 실패 — endat 미확정이고 fallback duration도 없음")
             state.error = "영상 길이를 알 수 없습니다."
             return state
 

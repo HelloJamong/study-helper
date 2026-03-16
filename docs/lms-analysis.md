@@ -1,12 +1,12 @@
-# LMS 구조 분석 정의서
+# Learning X 구조 분석 정의서
 
-숭실대학교 Canvas LMS(`canvas.ssu.ac.kr`) 연동 방식 및 각 기능의 구현 분석 문서.
+숭실대학교 Canvas Learning X(`canvas.ssu.ac.kr`) 연동 방식 및 각 기능의 구현 분석 문서.
 
 ---
 
 ## 목차
 
-1. [LMS 전체 구조](#1-lms-전체-구조)
+1. [Learning X 전체 구조](#1-learning-x-전체-구조)
 2. [인증 (로그인)](#2-인증-로그인)
 3. [과목 목록 수집](#3-과목-목록-수집)
 4. [강의 목록 수집](#4-강의-목록-수집)
@@ -16,10 +16,10 @@
 
 ---
 
-## 1. LMS 전체 구조
+## 1. Learning X 전체 구조
 
 ```
-canvas.ssu.ac.kr (LMS 메인)
+canvas.ssu.ac.kr (Learning X 메인)
 │
 ├── 대시보드 (/)
 │   └── window.ENV.STUDENT_PLANNER_COURSES  ← 과목 목록 데이터
@@ -96,7 +96,7 @@ if "login" in page.url:
 
 ### 구조
 
-LMS 대시보드는 Canvas LMS 기반으로, 수강 과목 목록을 **JavaScript 전역 변수** `window.ENV.STUDENT_PLANNER_COURSES`에 JSON 배열로 주입한다.
+Learning X 대시보드는 Canvas Learning X 기반으로, 수강 과목 목록을 **JavaScript 전역 변수** `window.ENV.STUDENT_PLANNER_COURSES`에 JSON 배열로 주입한다.
 
 별도 API 엔드포인트 호출 없이 이 변수를 `page.evaluate()`로 직접 읽는다.
 
@@ -136,10 +136,10 @@ raw = await self._page.evaluate(
 
 ### iframe 구조
 
-강의 목록은 LMS가 외부 도구(external_tools/71)로 삽입한 SPA이다. 두 단계의 iframe을 거쳐야 실제 DOM에 접근할 수 있다.
+강의 목록은 Learning X가 외부 도구(external_tools/71)로 삽입한 SPA이다. 두 단계의 iframe을 거쳐야 실제 DOM에 접근할 수 있다.
 
 ```
-LMS 페이지
+Learning X 페이지
 └── iframe#tool_content
     └── commons.ssu.ac.kr iframe
         └── #root (data-course_name, data-professors 속성)
@@ -205,7 +205,7 @@ if "completed" in comp_classes and "incomplete" not in comp_classes:
 
 **파일:** `src/player/background_player.py` → `play_lecture()`
 
-LMS의 출석 처리는 영상 플레이어가 진도 API(`TargetUrl`)에 재생 진행 상황을 주기적으로 보고하는 방식으로 동작한다. 이를 headless 브라우저 환경에서 재현한다.
+Learning X의 출석 처리는 영상 플레이어가 진도 API(`TargetUrl`)에 재생 진행 상황을 주기적으로 보고하는 방식으로 동작한다. 이를 headless 브라우저 환경에서 재현한다.
 
 ### 재생 전략: Plan A → Plan B 자동 전환
 
@@ -303,7 +303,7 @@ https://commons.ssu.ac.kr/em/{content_id}
 ```
 
 - `state=3`: 재생 중 상태
-- `totalpage=15`: LMS 플레이어 기본값 (전체를 15 페이지로 나눔)
+- `totalpage=15`: Learning X 플레이어 기본값 (전체를 15 페이지로 나눔)
 - 30초 간격으로 보고, 최종 완료 시 `currentTime=duration`으로 보고
 
 #### ErrAlreadyInView 우회
@@ -440,7 +440,7 @@ with open(save_path, "wb") as f:
 
 **파일:** `src/scraper/course_scraper.py` → `_setup_browser()`
 
-LMS가 headless 브라우저를 차단하는 경우를 대비해 일반 Chrome처럼 보이도록 위장한다.
+Learning X가 headless 브라우저를 차단하는 경우를 대비해 일반 Chrome처럼 보이도록 위장한다.
 
 ### Chromium 실행 인수
 

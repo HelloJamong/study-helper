@@ -1,6 +1,6 @@
 # study-helper
 
-숭실대학교 LMS(canvas.ssu.ac.kr) 강의 영상을 Docker 컨테이너 환경에서 관리하는 CUI 도구입니다.
+숭실대학교 Learning X(canvas.ssu.ac.kr) 강의 영상을 Docker 컨테이너 환경에서 관리하는 CUI 도구입니다.
 
 ---
 
@@ -40,7 +40,7 @@
 
 | 항목 | 설명 |
 |------|------|
-| 숭실대 LMS 계정 | 학번 + 비밀번호 |
+| 숭실대 Learning X 계정 | 학번 + 비밀번호 |
 | Docker | 컨테이너 실행 환경 |
 | Gemini API 키 *(권장)* | AI 요약 사용 시 필요 — [발급 방법](docs/gemini-api-key.md) |
 | 텔레그램 봇 *(권장)* | 알림 수신 시 필요 — [설정 방법](docs/telegram-setup.md) |
@@ -88,7 +88,7 @@ docker compose run --rm study-helper
 
 ## 사용 방법
 
-실행하면 LMS에 자동 로그인 후 과목 목록이 표시됩니다.
+실행하면 Learning X에 자동 로그인 후 과목 목록이 표시됩니다.
 
 ```
   #    과목명                  미시청 / 전체    학기
@@ -208,16 +208,16 @@ Gemini API 키 발급 방법은 [Gemini API 키 발급 가이드](docs/gemini-ap
 
 ## 개발 참고
 
-LMS 구조 분석, 재생/다운로드 구현 방식, 셀렉터 정의 등 기술 문서는 아래를 참고하세요.
+Learning X 구조 분석, 재생/다운로드 구현 방식, 셀렉터 정의 등 기술 문서는 아래를 참고하세요.
 
-- [LMS 구조 분석 정의서](docs/lms-analysis.md) — 인증, 과목/강의 스크래핑, 백그라운드 재생, 영상 다운로드 구현 분석
+- [Learning X 구조 분석 정의서](docs/lms-analysis.md) — 인증, 과목/강의 스크래핑, 백그라운드 재생, 영상 다운로드 구현 분석
 
 ---
 
 ## 주의사항
 
 - 본 도구는 개인 학습 목적으로만 사용하세요.
-- LMS 서비스 약관을 준수하여 사용하시기 바랍니다.
+- Learning X 서비스 약관을 준수하여 사용하시기 바랍니다.
 - 학번, 비밀번호, API 키는 암호화되어 저장되며 `.env` 파일은 절대 외부에 공유하지 마세요.
 
 ### 면책 조항

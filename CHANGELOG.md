@@ -1,5 +1,16 @@
 # Changelog
 
+## [v1.1.4] - 2026-03-17
+
+### 수정
+- **learningx `endat=-8888` sentinel 값으로 인한 재생 실패 수정** (`src/player/background_player.py`)
+  - `_parse_player_url`에서 `endat` 파라미터가 음수(Learning X가 duration 미확정 강의에 사용하는 `-8888` 등 sentinel 값)인 경우 `0`으로 정규화하도록 수정
+  - 이전: `endat=-8888` → `duration = -8888.0` → `fallback_duration`이 있어도 `duration <= 0` 분기에서 활용되지 못하고 "영상 길이를 알 수 없습니다" 오류로 실패
+  - 이후: `endat=-8888` → `duration = 0.0` → `fallback_duration`(learningx API `item_content_data.duration`)으로 정상 fallback
+  - `content_type=movie` 강의(대면 강의 등) 재생 실패 사례 해소
+
+---
+
 ## [v1.1.3] - 2026-03-16
 
 ### 추가
@@ -30,7 +41,7 @@
 - **단위 테스트 26개**: `crypto`, `models`, `config`, `summarizer`, `converter`, `transcriber` 모듈 커버리지 확보
 - **STT 언어 선택**: 한국어(ko) / 영어(en) / 자동 감지(auto) 옵션 추가
 - **AI 요약 커스텀 프롬프트**: 사용자 정의 프롬프트 지원
-- **세션 만료 자동 재로그인**: LMS 세션 만료 감지 시 자동으로 재인증
+- **세션 만료 자동 재로그인**: Learning X 세션 만료 감지 시 자동으로 재인증
 - **다운로드 이어받기**: Range 헤더를 활용한 중단된 다운로드 재개 지원
 - **자동 모드 진행 상태 영속화**: JSON 파일로 자동 모드 진행 상태 저장/복원
 - **수동 모드 재생 오류 텔레그램 알림**: 수동 재생 중 오류 발생 시 텔레그램 알림 발송
@@ -144,7 +155,7 @@
 ### 수정
 - learningx 플레이어 강의 지원: `canvas.ssu.ac.kr/learningx/lti/lecture_attendance` 방식 강의를 자동 감지하여 learningx API에서 `viewer_url`을 조회, 기존 Plan B(진도 API 방식)로 출석 처리
 - 재생 완료 후 강의 목록의 시청 상태(`completion`)를 즉시 갱신하여 재로드 없이 완료 표시 반영
-- 강의 페이지 이동 시 `wait_until="networkidle"` → `domcontentloaded`로 변경하여 LMS 스트리밍/폴링으로 인한 30초 타임아웃 오류 수정
+- 강의 페이지 이동 시 `wait_until="networkidle"` → `domcontentloaded`로 변경하여 Learning X 스트리밍/폴링으로 인한 30초 타임아웃 오류 수정
 - 진도 API 요청에 `duration` 파라미터 누락으로 400 오류 발생하던 문제 수정
 - ARM64(Apple Silicon) Docker 환경에서 Chromium H.264 미지원 우회: VP8 WebM 더미 영상으로 MP4 요청 인터셉트
 - 백그라운드 재생 Plan B(진도 API 방식)에서 `endat=0.00`으로 인한 영상 길이 오류 수정, `LectureItem.duration`을 fallback으로 사용
@@ -159,7 +170,7 @@
 - 재생 완료 후 강의 목록의 시청 상태(`completion`)를 즉시 갱신하여 재로드 없이 완료 표시 반영
 
 ### 수정
-- 강의 페이지 이동 시 `wait_until="networkidle"` → `domcontentloaded`로 변경하여 LMS 스트리밍/폴링으로 인한 30초 타임아웃 오류 수정
+- 강의 페이지 이동 시 `wait_until="networkidle"` → `domcontentloaded`로 변경하여 Learning X 스트리밍/폴링으로 인한 30초 타임아웃 오류 수정
 - 진도 API 요청에 `duration` 파라미터 누락으로 400 오류 발생하던 문제 수정 (재생 루프 및 `sendPlayedTime` JS 오버라이드 모두 반영)
 - git credential helper를 `osxkeychain`에서 `store`로 변경하여 `failed to get/store: -25308` 오류 제거
 - Playwright 브라우저 실행 인수에 `--password-store=basic` 추가하여 macOS Keychain 접근 경고 제거
@@ -183,7 +194,7 @@
 ## [v1.0.0-beta.1] - 2026-03-06
 
 ### 추가
-- 숭실대학교 LMS 강의 백그라운드 재생
+- 숭실대학교 Learning X 강의 백그라운드 재생
 - 강의 영상(mp4) / 음성(mp3) 다운로드
 - OpenAI Whisper 기반 STT 변환
 - Gemini / OpenAI API 기반 AI 요약
