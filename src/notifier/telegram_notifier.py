@@ -171,6 +171,26 @@ def notify_summary_complete(
     return success
 
 
+def notify_deadline_warning(
+    bot_token: str,
+    chat_id: str,
+    course_name: str,
+    week_label: str,
+    lecture_title: str,
+    type_label: str,
+    end_date: str,
+    remaining_hours: float,
+) -> bool:
+    """마감 임박 알림을 전송한다."""
+    if remaining_hours >= 1:
+        time_text = f"약 {int(remaining_hours)}시간 남음"
+    else:
+        time_text = f"약 {int(remaining_hours * 60)}분 남음"
+    label = _lecture_label(course_name, week_label, lecture_title)
+    text = f"[마감 임박] {label}\n{type_label} | 마감: {end_date} ({time_text})"
+    return _send_message(bot_token, chat_id, text)
+
+
 def notify_summary_send_error(
     bot_token: str,
     chat_id: str,

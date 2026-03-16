@@ -30,13 +30,25 @@ def _load_or_create_key() -> bytes:
     """
     .secret_key 파일에서 키를 읽거나, 없으면 새로 생성해서 저장한다.
     .secret_key는 .gitignore에 등록되어야 한다.
+
+    Docker 볼륨 마운트 시 .secret_key가 디렉토리로 생성될 수 있으므로
+    디렉토리인 경우 내부의 key 파일을 사용한다.
     """
-    key_file = _resolve_key_path()
-    if key_file.is_file():
+    key_file = _KEY_PATH / "key" if _KEY_PATH.is_dir() else _KEY_PATH
+
+    if key_file.exists() and key_file.is_file():
         return key_file.read_bytes().strip()
+
     key = Fernet.generate_key()
+    if _KEY_PATH.is_dir():
+        key_file = _KEY_PATH / "key"
+    else:
+        key_file = _KEY_PATH
     key_file.write_bytes(key)
-    key_file.chmod(0o600)  # 소유자만 읽기/쓰기
+    try:
+        key_file.chmod(0o600)
+    except OSError:
+        pass  # Windows에서는 chmod가 제한적
     return key
 
 

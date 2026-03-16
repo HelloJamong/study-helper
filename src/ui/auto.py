@@ -8,22 +8,19 @@
 import asyncio
 import json
 import sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timedelta
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-from src.config import Config
+from src.config import KST, Config, get_data_path
 
 console = Console()
 
 # 자동 모드 진행 상태 파일
-_PROGRESS_FILE = Path("/data/auto_progress.json") if Path("/data").exists() else Path("data/auto_progress.json")
-
-_KST = timezone(timedelta(hours=9))
+_PROGRESS_FILE = get_data_path("auto_progress.json")
 
 # 기본 스케줄 (KST 시각, 정각)
 _DEFAULT_SCHEDULE_HOURS = [9, 13, 18, 23]
@@ -34,6 +31,8 @@ def _load_progress() -> set[str]:
     try:
         if _PROGRESS_FILE.exists():
             return set(json.loads(_PROGRESS_FILE.read_text(encoding="utf-8")))
+    except json.JSONDecodeError:
+        print("  [경고] auto_progress.json 파싱 실패 — 초기화합니다.", file=sys.stderr)
     except Exception:
         pass
     return set()
@@ -44,8 +43,8 @@ def _save_progress(completed: set[str]) -> None:
     try:
         _PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
         _PROGRESS_FILE.write_text(json.dumps(sorted(completed)), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  [경고] auto_progress.json 저장 실패: {e}", file=sys.stderr)
 
 
 def _check_auto_prerequisites() -> list[str]:
@@ -67,7 +66,7 @@ def _check_auto_prerequisites() -> list[str]:
 
 def _next_schedule_time(schedule_hours: list[int]) -> datetime:
     """다음 스케줄 실행 시각(KST)을 반환한다."""
-    now = datetime.now(_KST)
+    now = datetime.now(KST)
     today_schedules = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in sorted(schedule_hours)]
     for t in today_schedules:
         if t > now:
@@ -79,7 +78,7 @@ def _next_schedule_time(schedule_hours: list[int]) -> datetime:
 
 def _fmt_remaining(target: datetime) -> str:
     """현재 시각부터 target까지 남은 시간을 'H시간 M분 S초' 형식으로 반환한다."""
-    now = datetime.now(_KST)
+    now = datetime.now(KST)
     delta = target - now
     total = max(0, int(delta.total_seconds()))
     h, rem = divmod(total, 3600)
@@ -195,7 +194,7 @@ async def run_auto_mode(scraper, courses, details) -> None:
 
             # 대기 루프 — \r로 같은 줄 덮어쓰기
             while not stop_event.is_set():
-                now = datetime.now(_KST)
+                now = datetime.now(KST)
                 if now >= next_time:
                     break
                 remaining = _fmt_remaining(next_time)
@@ -216,7 +215,7 @@ async def run_auto_mode(scraper, courses, details) -> None:
                 break
 
             console.print()
-            now_str = datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S")
+            now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
             console.print(f"  [bold cyan][{now_str}] 스케줄 체크 시작[/bold cyan]")
             console.print()
 
@@ -229,6 +228,15 @@ async def run_auto_mode(scraper, courses, details) -> None:
                 console.print(f"  [red]강의 목록 갱신 실패: {e}[/red]")
                 await asyncio.sleep(60)
                 continue
+
+            # 마감 임박 항목 알림 체크
+            tg = Config.get_telegram_credentials()
+            if tg:
+                from src.notifier.deadline_checker import check_and_notify_deadlines
+
+                dl_count = check_and_notify_deadlines(courses, details, token=tg[0], chat_id=tg[1])
+                if dl_count > 0:
+                    console.print(f"  [yellow]마감 임박 항목 {dl_count}건 — 텔레그램 알림 전송[/yellow]")
 
             # 과목별 미시청 강의 수집 (이미 처리된 강의는 건너뜀)
             completed = _load_progress()
@@ -284,7 +292,7 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> b
     from src.ui.player import run_player
 
     label = f"[{course.long_name}] {lec.title}"
-    now_str = datetime.now(_KST).strftime("%H:%M:%S")
+    now_str = datetime.now(KST).strftime("%H:%M:%S")
     console.print(f"  [{now_str}] [bold]{label}[/bold] 처리 중...")
 
     # ── 재생 ──────────────────────────────────────────────────────
@@ -330,15 +338,12 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> b
 
 def _tg_error_notify(course, lec, error_msg: str) -> None:
     """자동 모드 처리 오류를 텔레그램으로 알린다."""
-    if Config.TELEGRAM_ENABLED != "true":
-        return
-    token = Config.TELEGRAM_BOT_TOKEN
-    chat_id = Config.TELEGRAM_CHAT_ID
-    if not token or not chat_id:
+    creds = Config.get_telegram_credentials()
+    if not creds:
         return
     try:
         from src.notifier.telegram_notifier import notify_auto_error
 
-        notify_auto_error(token, chat_id, course.long_name, lec.week_label, lec.title, error_msg)
+        notify_auto_error(creds[0], creds[1], course.long_name, lec.week_label, lec.title, error_msg)
     except Exception:
         pass

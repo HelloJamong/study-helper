@@ -1,10 +1,14 @@
 import os
 import sys
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from src.crypto import decrypt, encrypt, is_encrypted
+
+# ── 공용 상수 ─────────────────────────────────────────────────
+KST = timezone(timedelta(hours=9))
 
 # .env 파일 로드 (없으면 환경변수만 사용)
 _env_path = Path(__file__).parent.parent / ".env"
@@ -14,36 +18,14 @@ load_dotenv(_env_path)
 def _load_credential(env_key: str) -> str:
     """
     환경변수를 읽어 복호화한다.
-    enc: 접두사가 있는데 복호화 실패 시(키 불일치) .env의 해당 키를 비워 재입력을 유도한다.
+    복호화 실패 시(키 불일치 등) 빈 문자열을 반환하되, .env 값은 보존한다.
     """
     raw = os.getenv(env_key, "")
     if not raw:
         return ""
     if is_encrypted(raw):
-        result = decrypt(raw)
-        if not result:
-            # 복호화 실패 → .env에서 해당 키 초기화
-            _clear_env_key(env_key)
-        return result
+        return decrypt(raw)
     return raw
-
-
-def _clear_env_key(env_key: str) -> None:
-    """복호화 실패한 키를 .env에서 비운다."""
-    try:
-        lines = _env_path.read_text(encoding="utf-8").splitlines(keepends=True)
-        new_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if "=" in stripped and not stripped.startswith("#"):
-                key = stripped.split("=", 1)[0].strip()
-                if key == env_key:
-                    new_lines.append(f"{key}=\n")
-                    continue
-            new_lines.append(line)
-        _env_path.write_text("".join(new_lines), encoding="utf-8")
-    except Exception:
-        pass
 
 
 def _default_download_dir() -> str:
@@ -75,6 +57,12 @@ def _read_version() -> str:
 APP_VERSION = _read_version()
 
 
+def get_data_path(filename: str) -> Path:
+    """데이터 파일 경로를 반환한다. Docker(/data) 또는 로컬(data/)."""
+    base = Path("/data") if Path("/data").exists() else Path("data")
+    return base / filename
+
+
 class Config:
     LMS_USER_ID: str = _load_credential("LMS_USER_ID")
     LMS_PASSWORD: str = _load_credential("LMS_PASSWORD")
@@ -102,6 +90,15 @@ class Config:
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
     # 텔레그램 전송 후 파일 자동 삭제
     TELEGRAM_AUTO_DELETE: str = os.getenv("TELEGRAM_AUTO_DELETE", "")
+
+    @classmethod
+    def get_telegram_credentials(cls) -> tuple[str, str] | None:
+        """텔레그램이 활성화되고 credential이 유효하면 (token, chat_id) 반환."""
+        if cls.TELEGRAM_ENABLED != "true":
+            return None
+        if not cls.TELEGRAM_BOT_TOKEN or not cls.TELEGRAM_CHAT_ID:
+            return None
+        return cls.TELEGRAM_BOT_TOKEN, cls.TELEGRAM_CHAT_ID
 
     @classmethod
     def has_credentials(cls) -> bool:

@@ -43,7 +43,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         True: 정상 완료 / False: 오류
     """
     from src.converter.audio_converter import convert_to_mp3
-    from src.downloader.video_downloader import download_video_with_browser, extract_video_url, make_filename
+    from src.downloader.video_downloader import download_video_with_browser, extract_video_url, make_filepath
 
     console.print()
     console.print(
@@ -59,12 +59,9 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
 
     def _tg_error(msg_fn):
         """텔레그램 오류 알림을 전송한다 (설정된 경우에만)."""
-        if Config.TELEGRAM_ENABLED != "true":
-            return
-        tg_token = Config.TELEGRAM_BOT_TOKEN
-        tg_chat_id = Config.TELEGRAM_CHAT_ID
-        if tg_token and tg_chat_id:
-            msg_fn(tg_token, tg_chat_id)
+        creds = Config.get_telegram_credentials()
+        if creds:
+            msg_fn(creds[0], creds[1])
 
     # 1. learningx 타입 조기 감지 (구조적으로 다운로드 불가)
     if "learningx" in lec.full_url:
@@ -104,8 +101,12 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         return False
 
     # 3. 파일 경로 결정
-    mp4_filename = make_filename(course.long_name, lec.title)
-    mp4_path = Path(download_dir) / mp4_filename
+    mp4_relpath = make_filepath(course.long_name, lec.week_label, lec.title)
+    mp4_path = (Path(download_dir) / mp4_relpath).resolve()
+    base_dir = Path(download_dir).resolve()
+    if not mp4_path.is_relative_to(base_dir):
+        console.print("  [bold red]오류:[/bold red] 잘못된 다운로드 경로가 감지되었습니다.")
+        return False
 
     if audio_only:
         final_path = mp4_path.with_suffix(".mp3")
@@ -116,7 +117,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
     console.print(f"  [dim]저장 경로: {final_path}[/dim]")
     console.print()
 
-    # 3. mp4 다운로드 + Progress bar
+    # 4. mp4 다운로드 + Progress bar
     progress = Progress(
         SpinnerColumn(),
         TextColumn("  [bold]{task.description}"),
@@ -140,7 +141,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         logger, log_path = get_error_logger("download")
         logger.info(f"강의: {lec.title}")
         logger.info(f"URL: {lec.full_url}")
-        logger.info(f"영상 URL: {video_url}")
+        logger.info("영상 URL: [CDN URL 로그 제외]")
         logger.error(f"다운로드 실패: {e}")
         console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         from src.notifier.telegram_notifier import notify_download_error
@@ -148,7 +149,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         _tg_error(lambda t, c: notify_download_error(t, c, course.long_name, lec.week_label, lec.title))
         return False
 
-    # 4. mp3 변환 (audio_only 또는 both)
+    # 5. mp3 변환 (audio_only 또는 both)
     mp3_path: Path | None = None
     if audio_only or both:
         console.print()
@@ -171,7 +172,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         console.print("  [bold green]다운로드 완료![/bold green]")
         console.print(f"  [dim]{mp4_path}[/dim]")
 
-    # 5. STT 변환 (mp3가 있고 STT_ENABLED=true인 경우)
+    # 6. STT 변환 (mp3가 있고 STT_ENABLED=true인 경우)
     txt_path = None
     if mp3_path and Config.STT_ENABLED == "true":
         console.print()
@@ -189,7 +190,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
         except Exception as e:
             console.print(f"  [bold red]STT 실패:[/bold red] {e}")
 
-    # 6. AI 요약 (txt가 있고 AI_ENABLED=true인 경우)
+    # 7. AI 요약 (txt가 있고 AI_ENABLED=true인 경우)
     summary_path = None
     if txt_path and Config.AI_ENABLED == "true":
         api_key = Config.GOOGLE_API_KEY if Config.AI_AGENT == "gemini" else Config.OPENAI_API_KEY
@@ -233,7 +234,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
             except Exception as e:
                 console.print(f"  [bold red]AI 요약 실패:[/bold red] {e}")
 
-    # 7. 텔레그램 알림 (AI 요약 완료 시)
+    # 8. 텔레그램 알림 (AI 요약 완료 시)
     if summary_path and Config.TELEGRAM_ENABLED == "true":
         tg_token = Config.TELEGRAM_BOT_TOKEN
         tg_chat_id = Config.TELEGRAM_CHAT_ID

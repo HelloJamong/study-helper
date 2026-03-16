@@ -2,7 +2,7 @@ import asyncio
 import re
 from collections.abc import Callable
 
-from playwright.async_api import Frame, async_playwright
+from playwright.async_api import Frame, Page, async_playwright
 
 from src.auth.login import ensure_logged_in
 from src.scraper.models import (
@@ -46,7 +46,10 @@ class CourseScraper:
         self._log = log_callback or (lambda msg: None)
         self._pw = None
         self._browser = None
+        self._context = None
         self._page = None
+        self._login_lock = asyncio.Lock()
+        self._session_restored = False  # 병렬 재로그인 중복 방지 플래그
 
     async def _setup_browser(self):
         _args = [
@@ -85,8 +88,7 @@ class CourseScraper:
             permissions=["camera", "microphone", "geolocation"],
             viewport={"width": 1280, "height": 720},
         )
-        page = await context.new_page()
-        await page.add_init_script("""
+        await context.add_init_script("""
             // webdriver 속성 제거
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 
@@ -116,6 +118,8 @@ class CourseScraper:
                     : originalQuery(parameters)
             );
         """)
+        page = await context.new_page()
+        self._context = context
         return page, browser
 
     async def start(self):
@@ -184,16 +188,56 @@ class CourseScraper:
             self._log("재로그인 완료")
 
     async def fetch_lectures(self, course: Course) -> CourseDetail:
-        """과목의 주차별 강의 목록 스크래핑"""
+        """과목의 주차별 강의 목록 스크래핑 (메인 페이지 사용)"""
+        return await self._fetch_lectures_on(self._page, course)
+
+    async def fetch_all_details(
+        self,
+        courses: list[Course],
+        concurrency: int = 3,
+        on_complete: Callable[[], None] | None = None,
+    ) -> list[CourseDetail | None]:
+        """여러 과목의 강의 상세를 병렬로 로드한다."""
+        sem = asyncio.Semaphore(concurrency)
+        results: list[CourseDetail | None] = [None] * len(courses)
+
+        self._session_restored = False
+
+        async def _fetch_one(idx: int, course: Course):
+            async with sem:
+                page = await self._context.new_page()
+                try:
+                    results[idx] = await self._fetch_lectures_on(page, course)
+                except Exception as e:
+                    self._log(f"강의 로딩 실패 ({course.long_name}): {e}")
+                    results[idx] = None
+                finally:
+                    await page.close()
+                    if on_complete:
+                        on_complete()
+
+        await asyncio.gather(*[_fetch_one(i, c) for i, c in enumerate(courses)])
+        return results
+
+    async def _fetch_lectures_on(self, page: Page, course: Course) -> CourseDetail:
+        """지정된 페이지로 과목의 주차별 강의 목록을 스크래핑한다."""
         self._log(f"강의 목록 로딩: {course.long_name}")
-        await self._page.goto(course.lectures_url, wait_until="networkidle")
+        await page.goto(course.lectures_url, wait_until="networkidle")
 
-        # 세션 만료로 로그인 페이지로 리디렉트된 경우 재로그인 후 재시도
-        if "login" in self._page.url:
-            await self._ensure_session()
-            await self._page.goto(course.lectures_url, wait_until="networkidle")
+        # 세션 만료 시 재로그인 (병렬 실행 시 lock + 플래그로 중복 방지)
+        if "login" in page.url:
+            async with self._login_lock:
+                if not self._session_restored:
+                    self._log("세션 만료 감지 — 자동 재로그인 중...")
+                    ok = await ensure_logged_in(page, self.username, self.password)
+                    if not ok:
+                        raise RuntimeError("자동 재로그인 실패. 학번/비밀번호를 확인하세요.")
+                    self._log("재로그인 완료")
+                    self._session_restored = True
+            # lock 해제 후 쿠키가 공유되었으므로 페이지만 다시 이동
+            await page.goto(course.lectures_url, wait_until="networkidle")
 
-        iframe_el = await self._page.wait_for_selector("iframe#tool_content", timeout=15000)
+        iframe_el = await page.wait_for_selector("iframe#tool_content", timeout=15000)
         iframe = await iframe_el.content_frame()
         if not iframe:
             raise RuntimeError("iframe을 찾을 수 없습니다.")

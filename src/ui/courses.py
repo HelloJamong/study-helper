@@ -265,12 +265,5 @@ def _show_lecture_action_menu(lec: LectureItem) -> LectureAction:
 
 
 async def _reload_details(scraper, courses: list[Course]) -> list[CourseDetail | None]:
-    """자동 모드에서 강의 목록을 새로고침한다."""
-    details: list[CourseDetail | None] = []
-    for course in courses:
-        try:
-            detail = await scraper.fetch_lectures(course)
-        except Exception:
-            detail = None
-        details.append(detail)
-    return details
+    """자동 모드에서 강의 목록을 새로고침한다 (병렬)."""
+    return await scraper.fetch_all_details(courses)

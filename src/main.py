@@ -7,7 +7,7 @@ from rich.text import Text
 
 from src.config import Config
 from src.scraper.course_scraper import CourseScraper
-from src.scraper.models import Course, CourseDetail
+from src.scraper.models import Course
 from src.ui.courses import _AUTO_SENTINEL, LectureAction, show_course_list, show_week_list
 from src.ui.download import run_download
 from src.ui.login import (
@@ -84,6 +84,15 @@ async def run():
         await scraper.close()
         sys.exit(1)
 
+    # ── 3.5. 마감 임박 알림 체크 ─────────────────────────────────
+    tg = Config.get_telegram_credentials()
+    if tg:
+        from src.notifier.deadline_checker import check_and_notify_deadlines
+
+        deadline_count = check_and_notify_deadlines(courses, details, token=tg[0], chat_id=tg[1])
+        if deadline_count > 0:
+            console.print(f"  [yellow]마감 임박 항목 {deadline_count}건 — 텔레그램 알림 전송 완료[/yellow]")
+
     # ── 4. 과목 선택 루프 ────────────────────────────────────────
     while True:
         selected = show_course_list(courses, details, user_id=user_id, latest_version=latest_version)
@@ -146,14 +155,15 @@ async def _load_courses_task(scraper: CourseScraper):
 
 
 async def _check_update_compat():
-    """버전 체크를 비동기 태스크로 실행한다. 실패 시 None 반환."""
+    """버전 체크를 스레드풀에 위임하여 이벤트 루프 블로킹을 방지한다."""
     from src.config import APP_VERSION
 
-    return check_update(APP_VERSION)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, check_update, APP_VERSION)
 
 
 async def _load_courses(scraper: CourseScraper):
-    """과목 목록과 각 과목의 강의 상세를 병렬로 로드한다."""
+    """과목 목록을 가져온 뒤 각 과목의 강의 상세를 병렬로 로드한다."""
     with Live(
         Text("  과목 목록 불러오는 중...", style="yellow"),
         console=console,
@@ -161,34 +171,30 @@ async def _load_courses(scraper: CourseScraper):
     ):
         courses: list[Course] = await scraper.fetch_courses()
 
-    details: list[CourseDetail | None] = []
-    for i, course in enumerate(courses, 1):
-        with Live(
-            Text(f"  강의 정보 로딩 중... ({i}/{len(courses)}) {course.long_name}", style="yellow"),
-            console=console,
-            transient=True,
-        ):
-            try:
-                detail = await scraper.fetch_lectures(course)
-            except Exception:
-                detail = None
-        details.append(detail)
+    completed_count = 0
+    total = len(courses)
+
+    def _progress_text():
+        return Text(f"  강의 정보 병렬 로딩 중... ({completed_count}/{total})", style="yellow")
+
+    with Live(_progress_text(), console=console, transient=True) as live:
+
+        def _on_complete():
+            nonlocal completed_count
+            completed_count += 1
+            live.update(_progress_text())
+
+        details = await scraper.fetch_all_details(courses, concurrency=3, on_complete=_on_complete)
 
     return courses, details
 
 
-def _tg_token_chat() -> tuple[str, str]:
-    """텔레그램이 활성화된 경우 (token, chat_id)를 반환한다. 비활성화 시 빈 문자열."""
-    if Config.TELEGRAM_ENABLED != "true":
-        return "", ""
-    return Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID
-
-
 def _tg_notify_playback_complete(course_name: str, lec) -> None:
     """재생 완료 텔레그램 알림 전송."""
-    token, chat_id = _tg_token_chat()
-    if not token or not chat_id:
+    creds = Config.get_telegram_credentials()
+    if not creds:
         return
+    token, chat_id = creds
     from src.notifier.telegram_notifier import notify_playback_complete
 
     notify_playback_complete(
@@ -206,9 +212,10 @@ def _tg_notify_playback_error(course_name: str, lec, failed: bool = True) -> Non
     Args:
         failed: True면 재생 오류, False면 재생 미완료(중단)
     """
-    token, chat_id = _tg_token_chat()
-    if not token or not chat_id:
+    creds = Config.get_telegram_credentials()
+    if not creds:
         return
+    token, chat_id = creds
     from src.notifier.telegram_notifier import notify_playback_error
 
     notify_playback_error(
