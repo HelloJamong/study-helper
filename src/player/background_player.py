@@ -544,8 +544,7 @@ async def _play_via_progress_api(
             if _m:
                 _course_id, _component_id = _m.group(1), _m.group(2)
                 _items_url = (
-                    f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{_course_id}"
-                    f"/attendance_items/{_component_id}"
+                    f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{_course_id}/attendance_items/{_component_id}"
                 )
                 log(f"  [API] attendance_items API로 duration 조회 중: {_items_url}")
                 try:
@@ -553,9 +552,7 @@ async def _play_via_progress_api(
                     _body = await _resp.text()
                     log(f"  [API] attendance_items 응답: status={_resp.status} body={_body[:200]!r}")
                     _data = json.loads(_body)
-                    _api_duration = float(
-                        (_data.get("item_content_data") or {}).get("duration") or 0
-                    )
+                    _api_duration = float((_data.get("item_content_data") or {}).get("duration") or 0)
                     if _api_duration > 0:
                         log(f"  [API] attendance_items duration={_api_duration:.1f}s — 사용")
                         duration = _api_duration
