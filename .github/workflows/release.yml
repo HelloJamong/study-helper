@@ -33,8 +33,8 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/study-helper
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=raw,value=latest
 
       - name: 빌드 및 Docker Hub 푸시
         uses: docker/build-push-action@v5
