@@ -118,11 +118,11 @@ async def run():
 
         lec, action = result
         if action == LectureAction.PLAY:
-            success, has_error = await run_player(scraper._page, lec, debug=False)
+            success, has_error, user_cancelled = await run_player(scraper._page, lec, debug=False)
             if success:
                 lec.completion = "completed"
                 _tg_notify_playback_complete(selected.long_name, lec)
-            else:
+            elif not user_cancelled:
                 _tg_notify_playback_error(selected.long_name, lec, failed=has_error)
             input("\n  Enter를 눌러 계속...")
         elif action == LectureAction.DOWNLOAD:

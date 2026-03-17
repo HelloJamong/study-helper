@@ -4,6 +4,9 @@
 백그라운드 재생 진행 상태를 rich Progress bar로 표시한다.
 """
 
+import asyncio
+import sys
+
 from rich.console import Console
 from rich.live import Live
 from rich.progress import (
@@ -60,7 +63,7 @@ def _tg_playback_error(lec: LectureItem, failed: bool = True) -> None:
         pass
 
 
-async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool, bool]:
+async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool, bool, bool]:
     """
     강의를 백그라운드 재생하고 CUI로 진행 상태를 표시한다.
 
@@ -69,12 +72,15 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
         lec:  재생할 LectureItem
 
     Returns:
-        (success, has_error)
+        (success, has_error, user_cancelled)
         - success=True: 정상 완료
         - success=False, has_error=True: 재생 오류
-        - success=False, has_error=False: 재생 미완료(중단)
+        - success=False, has_error=False, user_cancelled=True: 사용자 중단(q+Enter / Ctrl+C)
+        - success=False, has_error=False, user_cancelled=False: 재생 미완료
     """
     console.clear()
+    console.print("  [dim]q + Enter 로 재생 중단[/dim]")
+    console.print()
 
     # LectureItem.duration에서 예상 전체 시간 추출 (없으면 나중에 영상에서 채움)
     estimated_duration = _parse_duration(lec.duration)
@@ -121,19 +127,47 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
             time_str=time_str,
         )
 
-    with Live(progress, console=console, refresh_per_second=4):
-        final_state = await play_lecture(
+    play_task = asyncio.ensure_future(
+        play_lecture(
             page=page,
             lecture_url=lec.full_url,
             on_progress=on_progress,
             debug=True,  # 항상 로그 수집 (오류 시 파일로 저장)
-            fallback_duration=estimated_duration,
+            fallback_duration=0,  # lec.duration은 표시용 — 실제 duration은 sniff/meta로 확보
             log_fn=_log,
         )
+    )
+
+    async def _stop_listener():
+        """재생 중 'q' + Enter 입력 시 재생 태스크를 취소한다."""
+        loop = asyncio.get_event_loop()
+        while not play_task.done():
+            try:
+                line = await loop.run_in_executor(None, sys.stdin.readline)
+                if line.strip().lower() == "q":
+                    play_task.cancel()
+                    break
+            except Exception:
+                break
+
+    stop_task = asyncio.ensure_future(_stop_listener())
+
+    with Live(progress, console=console, refresh_per_second=4):
+        try:
+            final_state = await play_task
+        finally:
+            stop_task.cancel()
+            try:
+                await stop_task
+            except asyncio.CancelledError:
+                pass
 
     console.print()
 
     if final_state.error:
+        if final_state.error == "사용자 중단":
+            console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
+            return False, False, True
         console.print(f"  [bold red]재생 오류:[/bold red] {final_state.error}")
         # 오류 발생 시에만 로그 파일 생성
         logger, log_path = get_error_logger("play")
@@ -145,11 +179,20 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
             logger.info(line)
         console.print(f"  [dim]로그 저장: {log_path}[/dim]")
         _tg_playback_error(lec, failed=True)
-        return False, True
+        return False, True, False
 
     if final_state.ended:
         console.print("  [bold green]재생 완료![/bold green]")
-        return True, False
+        # 진단용: 항상 로그 저장 (duration 교정 확인)
+        logger, log_path = get_error_logger("play")
+        logger.info(f"강의: {lec.title}")
+        logger.info(f"URL: {lec.full_url}")
+        logger.info(f"상태: 재생 완료 (duration={final_state.duration:.1f}s)")
+        logger.info("--- 재생 로그 ---")
+        for line in log_buffer:
+            logger.info(line)
+        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+        return True, False, False
 
     # 재생 미완료(중단)도 로그 저장
     logger, log_path = get_error_logger("play")
@@ -162,4 +205,4 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
     console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
     console.print(f"  [dim]로그 저장: {log_path}[/dim]")
     _tg_playback_error(lec, failed=False)
-    return False, False
+    return False, False, False

@@ -213,26 +213,41 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
             )
             task_id = spinner_progress.add_task("AI 요약 중...", total=None)
 
-            try:
-                with Live(spinner_progress, console=console, refresh_per_second=8):
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        loop = asyncio.get_event_loop()
-                        with ThreadPoolExecutor() as pool:
-                            summary_path = await loop.run_in_executor(
-                                pool,
-                                lambda: summarize(
-                                    txt_path,
-                                    agent=Config.AI_AGENT or "gemini",
-                                    api_key=api_key,
-                                    model=model or GEMINI_DEFAULT_MODEL,
-                                    extra_prompt=Config.SUMMARY_PROMPT_EXTRA,
-                                ),
-                            )
-                console.print("  [bold green]AI 요약 완료![/bold green]")
-                console.print(f"  [dim]{summary_path}[/dim]")
-            except Exception as e:
-                console.print(f"  [bold red]AI 요약 실패:[/bold red] {e}")
+            _MAX_RETRIES = 3
+            _RETRY_DELAY = 5
+            last_error = None
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    if attempt > 0:
+                        spinner_progress.update(
+                            task_id, description=f"AI 요약 중... (재시도 {attempt}/{_MAX_RETRIES - 1})"
+                        )
+                        await asyncio.sleep(_RETRY_DELAY)
+                    with Live(spinner_progress, console=console, refresh_per_second=8):
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            loop = asyncio.get_event_loop()
+                            with ThreadPoolExecutor() as pool:
+                                summary_path = await loop.run_in_executor(
+                                    pool,
+                                    lambda: summarize(
+                                        txt_path,
+                                        agent=Config.AI_AGENT or "gemini",
+                                        api_key=api_key,
+                                        model=model or GEMINI_DEFAULT_MODEL,
+                                        extra_prompt=Config.SUMMARY_PROMPT_EXTRA,
+                                    ),
+                                )
+                    console.print("  [bold green]AI 요약 완료![/bold green]")
+                    console.print(f"  [dim]{summary_path}[/dim]")
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < _MAX_RETRIES - 1:
+                        console.print(f"  [yellow]AI 요약 실패 (재시도 예정): {e}[/yellow]")
+            if last_error is not None:
+                console.print(f"  [bold red]AI 요약 실패:[/bold red] {last_error}")
 
     # 8. 텔레그램 알림 (AI 요약 완료 시)
     if summary_path and Config.TELEGRAM_ENABLED == "true":

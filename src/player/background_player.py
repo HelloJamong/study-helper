@@ -494,6 +494,19 @@ async def _play_via_learningx_api(
     log(f"  [LX] viewer_url={viewer_url}")
     log(f"  [LX] duration={duration:.1f}s — Plan B로 전환")
 
+    # viewer_url의 endat/startat이 이전 진도(예: 330.00)로 고정되어 있는 경우
+    # 실제 duration으로 교체해서 commons가 전체 영상을 기준으로 동작하도록 한다.
+    if duration > 0 and "endat=" in viewer_url:
+        parsed_vu = urlparse(viewer_url)
+        qs_vu = parse_qs(parsed_vu.query, keep_blank_values=True)
+        old_endat = float(qs_vu.get("endat", ["0"])[0])
+        if abs(old_endat - duration) > 10:
+            import re as _re
+
+            viewer_url = _re.sub(r"endat=[^&]+", f"endat={duration:.2f}", viewer_url)
+            viewer_url = _re.sub(r"startat=[^&]+", "startat=0.00", viewer_url)
+            log(f"  [LX] endat 교정: {old_endat:.2f}s → {duration:.2f}s")
+
     return await _play_via_progress_api(
         page,
         viewer_url,
@@ -753,18 +766,38 @@ async def play_lecture(
     # 0. H.264 우회: VP8 WebM 더미 영상으로 commonscdn MP4 인터셉트
     # Chromium headless(ARM64 포함)는 H.264 미지원 → flashErrorPage.html 로드 → Plan A 실패
     # VP8 WebM을 대신 제공하면 Chromium이 정상 재생 → Plan A 동작 → LTI 세션 내에서 progress 보고
+    #
+    # route 핸들러는 MP4 요청이 실제로 왔을 때 그 시점의 fallback_duration으로 lazy 생성한다.
+    # 이렇게 하면 page.goto() + commons 로드 후 sniff/meta에서 올바른 duration을 확보한 뒤
+    # 실제 MP4 요청 시점에 올바른 길이의 webm을 생성할 수 있다.
     _using_fake_video = False
+    _fake_video_cache: list[bytes] = []  # 생성된 webm bytes 캐시 (재요청 대비)
+    # fallback_duration을 mutable container로 공유:
+    # _serve_fake 클로저(play_lecture 스코프)와 _play_lecture_inner의 교정 로직이
+    # 같은 객체를 참조하도록 list[float]로 감쌈. [0]이 현재 duration.
+    _shared_duration: list[float] = [fallback_duration]
+
     if fallback_duration > 0:
-        log(f"[0] H.264 우회: VP8 더미 영상 생성 중 (duration={fallback_duration:.0f}s)...")
+        log(f"[0] H.264 우회: lazy fake webm 등록 (초기 duration={fallback_duration:.0f}s, 실제 요청 시 생성)")
         try:
-            _fake_video_bytes = await _create_fake_webm(fallback_duration)
-            log(f"[0] 더미 영상 생성 완료 ({len(_fake_video_bytes):,} bytes)")
 
             async def _serve_fake(route, request):
+                # 요청 시점의 _shared_duration[0] 사용 (sniff/meta로 교정된 값 반영)
+                dur = _shared_duration[0]
+                if not _fake_video_cache:
+                    log(f"[0] fake webm 생성 중 (duration={dur:.0f}s)...")
+                    try:
+                        data = await _create_fake_webm(dur)
+                        _fake_video_cache.append(data)
+                        log(f"[0] fake webm 생성 완료 ({len(data):,} bytes)")
+                    except Exception as e:
+                        log(f"[0] fake webm 생성 실패 ({e}) — 원본으로 폴백")
+                        await route.continue_()
+                        return
                 await route.fulfill(
                     status=200,
                     headers={"Content-Type": "video/webm"},
-                    body=_fake_video_bytes,
+                    body=_fake_video_cache[0],
                 )
 
             await page.route("**/*.mp4", _serve_fake)
@@ -792,7 +825,7 @@ async def play_lecture(
             _using_fake_video = True
             log("[0] MP4 인터셉트 (*.mp4 전체) + canPlayType 오버라이드 등록 완료")
         except Exception as e:
-            log(f"[0] 더미 영상 생성 실패 ({e}) — 원본 스트림으로 계속")
+            log(f"[0] route 등록 실패 ({e}) — 원본 스트림으로 계속")
 
     # 1. 강의 페이지로 이동
     log(f"[1] 강의 페이지 이동: {lecture_url}")
@@ -820,6 +853,33 @@ async def play_lecture(
             pass
 
     page.on("response", _sniff_attendance_duration)
+
+    # commons /em/ URL의 endat가 이전 진도로 고정된 경우 실제 duration으로 교정
+    # attendance_items sniff로 duration을 먼저 얻고, 그 값으로 endat를 교체한다.
+    async def _fix_commons_endat(route, request):
+        url = request.url
+        if "commons.ssu.ac.kr/em/" not in url or "endat=" not in url:
+            await route.continue_()
+            return
+        if not _sniffed_duration:
+            await route.continue_()
+            return
+        real_dur = _sniffed_duration[0]
+        parsed_u = urlparse(url)
+        qs_u = parse_qs(parsed_u.query, keep_blank_values=True)
+        old_endat = float(qs_u.get("endat", ["0"])[0])
+        if abs(old_endat - real_dur) > 10:
+            fixed = re.sub(r"endat=[^&]+", f"endat={real_dur:.2f}", url)
+            fixed = re.sub(r"startat=[^&]+", "startat=0.00", fixed)
+            log(f"  [ROUTE] commons endat 교정: {old_endat:.2f}s → {real_dur:.2f}s")
+            await route.fulfill(status=302, headers={"Location": fixed})
+        else:
+            await route.continue_()
+
+    try:
+        await page.route("**/commons.ssu.ac.kr/em/**", _fix_commons_endat)
+    except Exception as e:
+        log(f"[0] commons endat route 등록 실패: {e}")
 
     _on_request = None
     _on_response = None
@@ -888,6 +948,10 @@ async def play_lecture(
                 await page.unroute("**/*.mp4")
             except Exception:
                 pass
+        try:
+            await page.unroute("**/commons.ssu.ac.kr/em/**")
+        except Exception:
+            pass
 
     try:
         return await _play_lecture_inner(
@@ -900,7 +964,12 @@ async def play_lecture(
             state,
             _using_fake_video,
             _sniffed_duration,
+            _fake_video_cache,
+            _shared_duration,
         )
+    except asyncio.CancelledError:
+        state.error = "사용자 중단"
+        return state
     finally:
         await _cleanup()
 
@@ -915,10 +984,28 @@ async def _play_lecture_inner(
     state: PlaybackState,
     _using_fake_video: bool,
     _sniffed_duration: list[float] | None = None,
+    _fake_video_cache: list[bytes] | None = None,
+    _shared_duration: list[float] | None = None,
 ) -> PlaybackState:
     """play_lecture()의 실제 재생 로직. try-finally로 _cleanup() 보장을 위해 분리."""
     await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
     log(f"    → 현재 URL: {page.url}")
+
+    # 세션 만료 감지 → 재로그인 후 재이동
+    if "login" in page.url:
+        log("[1] 세션 만료 감지 — 재로그인 중...")
+        from src.auth.login import ensure_logged_in
+        from src.config import Config
+
+        username = Config.LMS_USER_ID
+        password = Config.LMS_PASSWORD
+        ok = await ensure_logged_in(page, username, password)
+        if not ok:
+            state.error = "세션 만료 후 재로그인 실패"
+            return state
+        log("[1] 재로그인 완료 — 강의 페이지 재이동 중...")
+        await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
+        log(f"    → 재이동 후 URL: {page.url}")
 
     # 2. 초기 플레이어 선택 화면 frame 탐색 (재생 버튼이 있는 곳)
     log("[2] 플레이어 선택 화면 frame 탐색 중...")
@@ -943,7 +1030,7 @@ async def _play_lecture_inner(
             # endat=0.00 강의는 Plan A 진행 시 fallback_duration이 없으면 재생 실패하므로
             # 여기서 item_content_data.duration을 얻어 fallback_duration으로 사용
             lx_duration = await _fetch_learningx_duration(page, tool_frame.url, log)
-            if lx_duration > 0 and fallback_duration <= 0:
+            if lx_duration > 0:
                 log(f"    → learningx API duration={lx_duration:.1f}s — fallback_duration으로 사용")
                 fallback_duration = lx_duration
 
@@ -959,6 +1046,40 @@ async def _play_lecture_inner(
     # frame이 나중에 navigate되면 URL이 바뀌므로 지금 즉시 저장
     player_url_snapshot = player_frame.url
     log(f"    → 성공: {player_url_snapshot}")
+
+    # 2.5. commons frame의 meta 태그에서 실제 영상 duration 확인
+    # LectureItem.duration(강의 목록 표시용)이 실제와 다를 수 있으므로 commons HTML 기준으로 교정.
+    # sniff로도 동일하게 교정 시도한다.
+    try:
+        meta_dur = 0.0
+        # sniff duration 우선
+        if _sniffed_duration:
+            meta_dur = _sniffed_duration[0]
+            log(f"[2.5] sniff duration={meta_dur:.1f}s")
+        # sniff 없으면 commons meta 태그
+        if not meta_dur:
+            meta_dur = float(
+                await player_frame.evaluate(
+                    "() => { var m = document.querySelector('meta[name=\"commons.duration\"]'); "
+                    "return m ? parseFloat(m.getAttribute('content')) : 0; }"
+                )
+                or 0
+            )
+            if meta_dur > 0:
+                log(f"[2.5] commons meta duration={meta_dur:.1f}s")
+        if meta_dur > 0:
+            # _serve_fake 클로저가 참조하는 공유 컨테이너를 항상 최신 값으로 업데이트
+            if _shared_duration is not None:
+                _shared_duration[0] = meta_dur
+            if abs(meta_dur - fallback_duration) > 10:
+                log(f"    → fallback_duration({fallback_duration:.1f}s)과 차이 큼 — {meta_dur:.1f}s로 교정")
+                fallback_duration = meta_dur
+                # 이미 캐시된 경우(재요청) 캐시를 비워 재생성을 유도한다.
+                if _fake_video_cache is not None and _fake_video_cache:
+                    _fake_video_cache.clear()
+                    log("    → fake webm 캐시 초기화 (다음 MP4 요청 시 재생성)")
+    except Exception as e:
+        log(f"[2.5] duration 교정 실패: {e}")
 
     # 3. 이어보기 다이얼로그 처리 (처음부터 재생)
     await asyncio.sleep(1)
@@ -1001,9 +1122,26 @@ async def _play_lecture_inner(
     if not frame:
         log("    → video frame 없음. 진도 API 직접 호출 방식으로 전환...")
         log(f"    → player URL: {player_url_snapshot}")
-        if _sniffed_duration and fallback_duration <= 0:
+        # sniff duration 우선 적용 (LMS 응답에서 직접 캡처한 값)
+        if _sniffed_duration:
             fallback_duration = _sniffed_duration[0]
             log(f"    → sniff duration={fallback_duration:.1f}s → fallback_duration 적용")
+        # sniff 실패 시 commons frame의 meta 태그에서 duration 추출
+        if not _sniffed_duration:
+            for f in page.frames:
+                if "commons.ssu.ac.kr" not in f.url:
+                    continue
+                try:
+                    meta_dur = await f.evaluate(
+                        "() => { var m = document.querySelector('meta[name=\"commons.duration\"]'); "
+                        "return m ? parseFloat(m.getAttribute('content')) : 0; }"
+                    )
+                    if meta_dur and meta_dur > 0:
+                        fallback_duration = float(meta_dur)
+                        log(f"    → commons meta duration={fallback_duration:.1f}s → fallback_duration 적용")
+                        break
+                except Exception:
+                    pass
         return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
     log(f"    → video frame 발견: {frame.url}")
 
@@ -1248,9 +1386,20 @@ async def _play_lecture_inner(
     # duration의 50% 미만에서 ended되면 Plan B로 전환해 progress API를 직접 호출한다.
     if state.ended and state.duration > 0 and state.current < state.duration * 0.5:
         log(f"[7] 영상이 예상보다 일찍 종료 ({state.current:.1f}s / {state.duration:.1f}s) — Plan B로 전환")
-        if _sniffed_duration and fallback_duration <= 0:
+        if _sniffed_duration:
             fallback_duration = _sniffed_duration[0]
             log(f"    → sniff duration={fallback_duration:.1f}s → fallback_duration 적용")
+        elif frame:
+            try:
+                meta_dur = await frame.evaluate(
+                    "() => { var m = document.querySelector('meta[name=\"commons.duration\"]'); "
+                    "return m ? parseFloat(m.getAttribute('content')) : 0; }"
+                )
+                if meta_dur and meta_dur > 0:
+                    fallback_duration = float(meta_dur)
+                    log(f"    → commons meta duration={fallback_duration:.1f}s → fallback_duration 적용")
+            except Exception:
+                pass
         return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
 
     # Plan A 완료 후 progress API에 100% 직접 보고

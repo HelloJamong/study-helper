@@ -1,5 +1,48 @@
 # Changelog
 
+## [v26.03.13] - 2026-03-17
+
+### 수정
+- **재생 시 세션 만료 자동 재로그인** (`src/player/background_player.py`)
+  - `page.goto(lecture_url)` 후 로그인 페이지로 리다이렉트된 경우(`/login` 포함 URL) 감지
+  - `ensure_logged_in()`으로 자동 재로그인 후 강의 페이지 재이동 — "비디오 프레임을 찾지 못했습니다" 오류 방지
+- **재생 시간 5분 30초 고정 문제 근본 해결** (`src/player/background_player.py`)
+  - 원인: LMS `attendance_items` API의 `viewer_url`에 이전 진도(`startat=330.00&endat=330.00`)가 고정값으로 내려와 commons 플레이어가 330초 기준으로 동작
+  - `_fix_commons_endat` route 핸들러 추가: `commons.ssu.ac.kr/em/` 요청을 가로채 `endat`를 sniff된 실제 duration으로 교정 후 302 redirect
+  - `_play_via_learningx_api()`에서 `viewer_url`의 `endat` 파라미터도 직접 교정
+  - `fallback_duration=0`으로 변경하여 fake webm 비활성화 — 실제 duration은 sniff/meta에서 확보
+  - `_shared_duration: list[float]`(mutable container)로 duration을 공유하여 클로저 스코프 문제 해소
+- **q+Enter 사용자 중단 시 텔레그램 오류 알림 발송 방지** (`src/ui/player.py`, `src/ui/auto.py`, `src/main.py`)
+  - `run_player()` 반환값을 `(success, has_error)` → `(success, has_error, user_cancelled)` 3-tuple로 변경
+  - 사용자가 q+Enter로 의도적으로 중단한 경우 `user_cancelled=True` — 텔레그램 오류 알림 발송 안 함
+- **q+Enter / 0+Enter 두 번 입력해야 동작하는 문제 수정** (`src/ui/auto.py`)
+  - 원인: 자동 모드 `_input_listener`와 player의 `_stop_listener`가 동시에 `sys.stdin.readline()`을 경쟁하여 한 입력을 두 태스크가 나눠 소비
+  - `playing_event = asyncio.Event()` 추가: 재생 중 `_input_listener`가 stdin을 읽어도 버리도록 처리
+- **AI 요약 500 INTERNAL 오류 시 재시도** (`src/ui/download.py`)
+  - Gemini 서버 일시 오류 발생 시 최대 3회, 5초 간격으로 자동 재시도
+
+---
+
+## [v26.03.12] - 2026-03-17
+
+### 수정
+- **`endat=0.00` 강의 잘못된 재생 시간 사용 문제 수정** (`src/player/background_player.py`)
+  - LectureItem의 `duration` 필드(강의 목록 표시용, 예: "05:30")가 `fallback_duration`으로 전달되어 실제 영상 길이(1시간 13분)와 무관한 짧은 시간으로 재생되던 문제 해소
+  - sniff 리스너(`page.on("response")`)가 `attendance_items` 응답의 `text()`를 debug 리스너와 동시에 읽다 실패해 실제 duration(4407초)을 캡처하지 못하는 경우 대비책 추가
+  - Plan B 진입 시 sniff 실패한 경우 commons frame DOM의 `<meta name="commons.duration">` 값을 직접 읽어 duration 추출 — `page.request.get()` 없이 이미 로드된 HTML에서 읽으므로 401 문제 없음
+  - sniff 값이 있을 때 기존 `fallback_duration` 값과 무관하게 항상 덮어쓰도록 변경 (기존 `fallback_duration <= 0` 조건 제거)
+  - learningx 플레이어 감지 분기에서도 `_fetch_learningx_duration` 결과를 항상 적용하도록 동일 조건 제거
+- **자동 모드 `auto_progress.json` 의존성 제거** (`src/ui/auto.py`)
+  - 처리 완료된 강의 URL을 파일에 영구 저장하고 LMS 상태와 무관하게 건너뛰던 구조 제거
+  - 이제 LMS의 `completion` 상태(`lec.needs_watch`)만으로 미시청 여부 판단 — 스케줄마다 LMS를 재스크래핑하므로 LMS에 완료 반영 시 자동으로 건너뜀
+  - 기존 `data/auto_progress.json` 파일은 더 이상 참조되지 않음
+- **재생 중 Ctrl+C로 현재 강의만 중단 가능** (`src/player/background_player.py`, `src/ui/player.py`)
+  - `play_lecture()`에서 `asyncio.CancelledError`를 잡아 `state.error = "사용자 중단"`으로 반환 — 예외가 상위로 전파되어 프로세스 전체가 비정상 종료되던 문제 해소
+  - 개별 재생: Ctrl+C 시 "재생이 중단되었습니다." 출력 후 과목 선택 화면으로 복귀 (텔레그램 알림·로그 저장 없음)
+  - 자동 모드: Ctrl+C 시 현재 강의만 중단 후 auto 루프 계속 진행. 전체 종료는 "0 + Enter" 또는 재생 대기 중 Ctrl+C
+
+---
+
 ## [v26.03.11] - 2026-03-17
 
 ### 기타

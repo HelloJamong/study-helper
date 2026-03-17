@@ -6,7 +6,6 @@
 """
 
 import asyncio
-import json
 import sys
 from datetime import datetime, timedelta
 
@@ -15,36 +14,12 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-from src.config import KST, Config, get_data_path
+from src.config import KST, Config
 
 console = Console()
 
-# 자동 모드 진행 상태 파일
-_PROGRESS_FILE = get_data_path("auto_progress.json")
-
 # 기본 스케줄 (KST 시각, 정각)
 _DEFAULT_SCHEDULE_HOURS = [9, 13, 18, 23]
-
-
-def _load_progress() -> set[str]:
-    """처리 완료된 강의 URL 목록을 로드한다."""
-    try:
-        if _PROGRESS_FILE.exists():
-            return set(json.loads(_PROGRESS_FILE.read_text(encoding="utf-8")))
-    except json.JSONDecodeError:
-        print("  [경고] auto_progress.json 파싱 실패 — 초기화합니다.", file=sys.stderr)
-    except Exception:
-        pass
-    return set()
-
-
-def _save_progress(completed: set[str]) -> None:
-    """처리 완료된 강의 URL 목록을 저장한다."""
-    try:
-        _PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _PROGRESS_FILE.write_text(json.dumps(sorted(completed)), encoding="utf-8")
-    except Exception as e:
-        print(f"  [경고] auto_progress.json 저장 실패: {e}", file=sys.stderr)
 
 
 def _check_auto_prerequisites() -> list[str]:
@@ -171,6 +146,9 @@ async def run_auto_mode(scraper, courses, details) -> None:
     console.print()
 
     stop_event = asyncio.Event()
+    # 재생 중에는 True — _input_listener가 stdin을 읽어도 무시함으로써
+    # player의 _stop_listener와 stdin을 경쟁하지 않도록 한다.
+    playing_event = asyncio.Event()
 
     async def _input_listener():
         """별도 태스크로 사용자 입력을 감시한다. '0' + Enter로 종료."""
@@ -178,6 +156,9 @@ async def run_auto_mode(scraper, courses, details) -> None:
         while not stop_event.is_set():
             try:
                 line = await loop.run_in_executor(None, sys.stdin.readline)
+                # 재생 중에 읽힌 입력은 player의 _stop_listener가 처리하므로 버린다
+                if playing_event.is_set():
+                    continue
                 if line.strip() == "0":
                     stop_event.set()
                     break
@@ -245,15 +226,18 @@ async def run_auto_mode(scraper, courses, details) -> None:
                 if dl_count > 0:
                     console.print(f"  [yellow]마감 임박 항목 {dl_count}건 — 텔레그램 알림 전송[/yellow]")
 
-            # 과목별 미시청 강의 수집 (이미 처리된 강의는 건너뜀)
-            completed = _load_progress()
+            # 과목별 미시청 강의 수집
             pending_list: list[tuple] = []  # (course, lec)
             for course, detail in zip(courses, details, strict=False):
                 if detail is None:
+                    console.print(f"  [dim]  {course.long_name}: 강의 목록 로딩 실패[/dim]")
                     continue
-                for lec in detail.all_video_lectures:
-                    if lec.needs_watch and lec.full_url not in completed:
-                        pending_list.append((course, lec))
+                pending = [lec for lec in detail.all_video_lectures if lec.needs_watch]
+                console.print(
+                    f"  [dim]  {course.long_name}: 미시청 {len(pending)} / 전체 {detail.total_video_count}[/dim]"
+                )
+                for lec in pending:
+                    pending_list.append((course, lec))
 
             if not pending_list:
                 console.print("  [dim]미시청 강의가 없습니다.[/dim]")
@@ -266,10 +250,11 @@ async def run_auto_mode(scraper, courses, details) -> None:
             for course, lec in pending_list:
                 if stop_event.is_set():
                     break
-                success = await _process_lecture(scraper, course, lec, stop_event)
-                if success:
-                    completed.add(lec.full_url)
-                    _save_progress(completed)
+                playing_event.set()
+                try:
+                    await _process_lecture(scraper, course, lec, stop_event)
+                finally:
+                    playing_event.clear()
 
             console.print()
             console.print("  [bold green]이번 스케줄 처리 완료.[/bold green]")
@@ -305,8 +290,11 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> b
     # ── 재생 ──────────────────────────────────────────────────────
     console.print("  [dim]  → 재생 중...[/dim]")
     try:
-        success, has_error = await run_player(scraper._page, lec)
+        success, has_error, user_cancelled = await run_player(scraper._page, lec)
         if not success:
+            if user_cancelled:
+                console.print(f"  [yellow]  → 사용자 중단: {label}[/yellow]")
+                return False
             err_msg = "재생 오류" if has_error else "재생 미완료"
             console.print(f"  [yellow]  → {err_msg}: {label}[/yellow]")
             _tg_error_notify(course, lec, err_msg)
