@@ -98,6 +98,8 @@ def _configure_schedule() -> list[int]:
     console.print()
     console.print("  [bold]자동 모드 스케줄 설정[/bold]")
     console.print()
+    console.print("  [cyan]✓ 자동 모드 시작 시 즉시 1회 실행된 후 스케줄에 따라 반복됩니다.[/cyan]")
+    console.print()
     console.print(f"  기본 스케줄: KST 기준 {', '.join(f'{h:02d}:00' for h in _DEFAULT_SCHEDULE_HOURS)}")
     console.print("  [dim]변경하려면 시간을 쉼표로 구분해 입력하세요. (예: 8,12,18,22)[/dim]")
     console.print("  [dim]Enter를 누르면 기본 스케줄을 사용합니다.[/dim]")
@@ -184,32 +186,37 @@ async def run_auto_mode(scraper, courses, details) -> None:
 
     listener_task = asyncio.create_task(_input_listener())
 
+    first_run = True
     try:
         while not stop_event.is_set():
-            next_time = _next_schedule_time(schedule_hours)
+            # 최초 진입 시 즉시 실행, 이후부터는 스케줄 대기
+            if first_run:
+                first_run = False
+            else:
+                next_time = _next_schedule_time(schedule_hours)
 
-            # 안내 줄 출력 (한 번만)
-            sys.stdout.write("  0 + Enter 로 종료\n")
-            sys.stdout.flush()
-
-            # 대기 루프 — \r로 같은 줄 덮어쓰기
-            while not stop_event.is_set():
-                now = datetime.now(KST)
-                if now >= next_time:
-                    break
-                remaining = _fmt_remaining(next_time)
-                line = (
-                    f"  \033[1;32m● 자동 모드 동작 중\033[0m"
-                    f"  \033[2m다음 체크  {next_time.strftime('%H:%M')} ({remaining} 후)\033[0m"
-                    "          "
-                )
-                sys.stdout.write(f"\r{line}")
+                # 안내 줄 출력 (한 번만)
+                sys.stdout.write("  0 + Enter 로 종료\n")
                 sys.stdout.flush()
-                await asyncio.sleep(1)
 
-            # 상태 줄 정리 후 개행
-            sys.stdout.write("\r" + " " * 80 + "\r\n")
-            sys.stdout.flush()
+                # 대기 루프 — \r로 같은 줄 덮어쓰기
+                while not stop_event.is_set():
+                    now = datetime.now(KST)
+                    if now >= next_time:
+                        break
+                    remaining = _fmt_remaining(next_time)
+                    line = (
+                        f"  \033[1;32m● 자동 모드 동작 중\033[0m"
+                        f"  \033[2m다음 체크  {next_time.strftime('%H:%M')} ({remaining} 후)\033[0m"
+                        "          "
+                    )
+                    sys.stdout.write(f"\r{line}")
+                    sys.stdout.flush()
+                    await asyncio.sleep(1)
+
+                # 상태 줄 정리 후 개행
+                sys.stdout.write("\r" + " " * 80 + "\r\n")
+                sys.stdout.flush()
 
             if stop_event.is_set():
                 break

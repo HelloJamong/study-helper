@@ -95,18 +95,18 @@ async def run():
 
     # ── 4. 과목 선택 루프 ────────────────────────────────────────
     while True:
-        selected = show_course_list(courses, details, user_id=user_id, latest_version=latest_version)
-        if selected is None:
+        result_course = show_course_list(courses, details, user_id=user_id, latest_version=latest_version)
+        if result_course is None:
             console.print("\n  [dim]종료합니다.[/dim]\n")
             break
 
-        if selected is _AUTO_SENTINEL:
+        if result_course is _AUTO_SENTINEL:
             from src.ui.auto import run_auto_mode
 
             await run_auto_mode(scraper, courses, details)
             continue
 
-        idx = courses.index(selected)
+        selected, idx = result_course
         detail = details[idx]
         if detail is None:
             console.print("\n  [red]강의 정보를 불러오지 못했습니다.[/red]\n")

@@ -1,5 +1,59 @@
 # Changelog
 
+## [v26.03.11] - 2026-03-17
+
+### 기타
+- **버전 형식 변경**: `v1.x.x` → `v연도.월.릴리즈순번` (예: `v26.03.11` = 26년 3월 11번째 릴리즈)
+
+### 변경
+- **자동 모드 진입 시 즉시 1회 실행** (`src/ui/auto.py`)
+  - 기존: 자동 모드 진입 후 다음 스케줄 시각까지 대기한 뒤 첫 실행
+  - 변경: 진입 즉시 1회 스케줄 체크·처리 실행 후 이후부터 스케줄 주기에 맞춰 동작
+- **자동 모드 스케줄 설정 화면에 즉시 실행 안내 추가** (`src/ui/auto.py`)
+  - 스케줄 설정 진입 시 "자동 모드 시작 시 즉시 1회 실행된 후 스케줄에 따라 반복됩니다" 안내 문구 표시
+
+### 수정
+- **강의 목록 `- / -` 표시 문제 수정** (`src/scraper/course_scraper.py`)
+  - `_fetch_lectures_on()`에서 `domcontentloaded` + iframe src 폴링 방식이 Canvas JS 실행 타이밍과 맞지 않아 iframe 연결에 실패하던 문제 해소
+  - 강의 목록 페이지 이동을 `networkidle` (timeout 60초)로 복원 — Canvas JS 실행 및 `iframe#tool_content` 로드까지 자연스럽게 대기
+  - `.xnmb-module-list` 출현 시까지 명시적 대기 추가로 SPA 렌더링 완료 보장
+- **전체 펼치기 버튼 클릭 실패 수정** (`src/scraper/course_scraper.py`)
+  - Canvas 상단 네비게이션 바(`ic-app-nav-toggle-and-crumbs`)가 `.xnmb-all_fold-btn` 위에 겹쳐 pointer events를 intercept하여 `ElementHandle.click()` 30초 타임아웃으로 실패하던 문제 해소
+  - `await expand_btn.click()` → `await expand_btn.evaluate("el => el.click()")` 로 변경하여 오버레이 무관하게 JS 직접 클릭 실행
+- **병렬 로딩 복원** (`src/scraper/course_scraper.py`)
+  - 디버깅 목적으로 순차 처리로 변경했던 `fetch_all_details()`를 `asyncio.Semaphore(concurrency=3)` + `asyncio.gather` 병렬 방식으로 재복원
+  - 각 과목을 독립 탭(`new_page()`)에서 처리하므로 Canvas nav 오버레이가 다른 탭에 영향 없음
+- **`re` 모듈 미import로 인한 재생 실패 수정** (`src/player/background_player.py`)
+  - `_play_via_progress_api()` 내 `attendance_items` fallback 코드에서 `re.search()` 사용 시 `name 're' is not defined` 오류 발생
+  - 파일 상단에 `import re` 추가
+- **learningx 플레이어 LTI 500 오류 시 재생 실패 수정** (`src/player/background_player.py`)
+  - LTI POST가 500으로 실패하면 `tool_content` iframe이 초기화되지 않아 commons frame 탐색 실패 → learningx API 401 오류로 재생 불가했던 문제 해소
+  - learningx 플레이어 감지 시 즉시 API 호출 대신 `networkidle` 대기 후 commons frame 재탐색 — LTI 세션이 지연 수립되는 경우 Plan A(DOM 재생)로 정상 진행
+  - `networkidle` 후에도 commons frame이 없을 경우에만 Plan B(`_play_via_learningx_api`) 진입
+  - learningx API 호출 시 `page.evaluate(fetch)` 방식이 401이면 `page.request.get()`(브라우저 컨텍스트 전체 쿠키 포함)으로 자동 재시도
+- **`endat=-8888` / `endat=0.00` 강의 "영상 길이를 알 수 없습니다" 오류 수정** (`src/player/background_player.py`)
+  - `page.request.get()`으로 `attendance_items` API 직접 호출 시 항상 401이 반환되는 문제 해소
+  - `page.on("response")` sniff 리스너로 브라우저가 자동 전송하는 `attendance_items` 응답을 가로채 `duration`을 `_sniffed_duration` 컨테이너에 캡처
+  - video frame 없음(Plan B 진입) 시점에 sniff된 duration을 `fallback_duration`으로 적용하여 진도 API 시뮬레이션 정상 동작
+
+---
+
+## [v1.1.5] - 2026-03-17
+
+### 수정
+- **강의 목록 로딩 속도 개선** (`src/scraper/course_scraper.py`)
+  - `start()` / `fetch_courses()` 대시보드 이동: `networkidle` → `domcontentloaded` + `wait_for_function`으로 `STUDENT_PLANNER_COURSES` JS 변수 주입 명시적 대기
+  - `_fetch_lectures_on()` 강의 목록 이동: `networkidle` → `domcontentloaded` + `wait_for_function`으로 `iframe#tool_content` src 설정 명시적 대기
+  - `networkidle`은 Learning X SPA 폴링으로 인해 최대 30초 타임아웃까지 블로킹되는 경우가 있어 병렬 로딩 시 전체 소요 시간이 증가하는 문제 해소
+- **과목 목록 잘못된 과목 표시 수정** (`src/scraper/course_scraper.py`)
+  - `fetch_courses`에서 `term` 필드 유무만으로 필터링하던 방식을 개선 — `term` 값별 과목 수를 집계해 가장 많이 등장하는 학기를 현재 학기로 간주, 해당 학기 과목만 반환
+  - 이전 학기 과목(비전 채플 등)이 즐겨찾기 등으로 잔존해 목록에 표시되던 문제 해소
+- **과목 선택 시 주차 화면으로 이동 안 되는 문제 수정** (`src/ui/courses.py`, `src/main.py`)
+  - `show_course_list`가 `Course` 객체만 반환하고 `main.py`에서 `courses.index(selected)`로 인덱스를 재탐색하던 방식을 `(Course, idx)` 튜플 반환으로 변경
+  - `courses.index()`의 equality 비교로 과목명·학기가 동일한 항목이 있을 때 잘못된 인덱스가 반환되어 `detail`이 매핑되지 않던 문제 제거
+
+---
+
 ## [v1.1.4] - 2026-03-17
 
 ### 수정

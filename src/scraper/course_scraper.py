@@ -126,7 +126,7 @@ class CourseScraper:
         self._pw = await async_playwright().start()
         self._page, self._browser = await self._setup_browser()
         self._log("LMS 접속 중...")
-        await self._page.goto(_DASHBOARD_URL, wait_until="networkidle")
+        await self._page.goto(_DASHBOARD_URL, wait_until="domcontentloaded")
         if "login" in self._page.url:
             self._log("로그인 진행 중...")
             ok = await ensure_logged_in(self._page, self.username, self.password)
@@ -143,18 +143,24 @@ class CourseScraper:
     async def fetch_courses(self) -> list[Course]:
         """대시보드에서 수강 과목 목록 추출"""
         if "canvas.ssu.ac.kr" not in self._page.url or "/courses/" in self._page.url:
-            await self._page.goto(_DASHBOARD_URL, wait_until="networkidle")
+            await self._page.goto(_DASHBOARD_URL, wait_until="domcontentloaded")
 
         # 세션 만료 시 자동 재로그인
         if "login" in self._page.url:
             await self._ensure_session()
-            await self._page.goto(_DASHBOARD_URL, wait_until="networkidle")
+            await self._page.goto(_DASHBOARD_URL, wait_until="domcontentloaded")
 
+        # STUDENT_PLANNER_COURSES는 JS로 주입되므로 변수가 채워질 때까지 대기
+        await self._page.wait_for_function(
+            "() => Array.isArray(window.ENV && window.ENV.STUDENT_PLANNER_COURSES)",
+            timeout=15000,
+        )
         raw = await self._page.evaluate("() => window.ENV && window.ENV.STUDENT_PLANNER_COURSES")
         if not raw:
             raise RuntimeError("과목 목록을 불러올 수 없습니다.")
 
-        courses = []
+        raw_courses = []
+        term_counts: dict[str, int] = {}
         for item in raw:
             # 학기 정보가 없는 비교과(안내 등) 과목 제외
             term = item.get("term", "")
@@ -162,12 +168,12 @@ class CourseScraper:
                 continue
 
             long_name = item.get("longName", "")
-            # LMS API가 "과목명 - 과목명" 형태로 중복 반환하는 경우 앞쪽만 사용
+            # Learning X API가 "과목명 - 과목명" 형태로 중복 반환하는 경우 앞쪽만 사용
             if " - " in long_name:
                 first, _, second = long_name.partition(" - ")
                 if first.strip() == second.strip():
                     long_name = first.strip()
-            courses.append(
+            raw_courses.append(
                 Course(
                     id=str(item["id"]),
                     long_name=long_name,
@@ -176,6 +182,15 @@ class CourseScraper:
                     is_favorited=item.get("isFavorited", False),
                 )
             )
+            term_counts[term] = term_counts.get(term, 0) + 1
+
+        # 가장 많이 등장하는 term을 현재 학기로 간주하여 해당 학기 과목만 반환
+        # (이전 학기 과목이 즐겨찾기 등으로 남아있는 경우 제외)
+        if term_counts:
+            current_term = max(term_counts, key=lambda t: term_counts[t])
+            courses = [c for c in raw_courses if c.term == current_term]
+        else:
+            courses = raw_courses
         return courses
 
     async def _ensure_session(self) -> None:
@@ -200,7 +215,6 @@ class CourseScraper:
         """여러 과목의 강의 상세를 병렬로 로드한다."""
         sem = asyncio.Semaphore(concurrency)
         results: list[CourseDetail | None] = [None] * len(courses)
-
         self._session_restored = False
 
         async def _fetch_one(idx: int, course: Course):
@@ -222,9 +236,10 @@ class CourseScraper:
     async def _fetch_lectures_on(self, page: Page, course: Course) -> CourseDetail:
         """지정된 페이지로 과목의 주차별 강의 목록을 스크래핑한다."""
         self._log(f"강의 목록 로딩: {course.long_name}")
-        await page.goto(course.lectures_url, wait_until="networkidle")
+        # networkidle로 Canvas JS + iframe 로드까지 대기 (timeout 60초로 여유 확보)
+        await page.goto(course.lectures_url, wait_until="networkidle", timeout=60000)
 
-        # 세션 만료 시 재로그인 (병렬 실행 시 lock + 플래그로 중복 방지)
+        # 세션 만료 시 재로그인
         if "login" in page.url:
             async with self._login_lock:
                 if not self._session_restored:
@@ -234,16 +249,14 @@ class CourseScraper:
                         raise RuntimeError("자동 재로그인 실패. 학번/비밀번호를 확인하세요.")
                     self._log("재로그인 완료")
                     self._session_restored = True
-            # lock 해제 후 쿠키가 공유되었으므로 페이지만 다시 이동
-            await page.goto(course.lectures_url, wait_until="networkidle")
+            await page.goto(course.lectures_url, wait_until="networkidle", timeout=60000)
 
         iframe_el = await page.wait_for_selector("iframe#tool_content", timeout=15000)
         iframe = await iframe_el.content_frame()
         if not iframe:
             raise RuntimeError("iframe을 찾을 수 없습니다.")
 
-        await iframe.wait_for_selector("#root", timeout=15000)
-        await asyncio.sleep(0.5)
+        await iframe.wait_for_selector(".xnmb-module-list", timeout=30000)
 
         root = await iframe.query_selector("#root")
         course_name = await root.get_attribute("data-course_name") or course.long_name
@@ -253,7 +266,9 @@ class CourseScraper:
         if expand_btn:
             btn_text = await expand_btn.text_content()
             if btn_text and "펼치기" in btn_text:
-                await expand_btn.click()
+                # Canvas 상단 nav가 버튼을 가려 pointer events를 intercept하는 경우가 있어
+                # JS로 직접 click() 호출하여 오버레이 무관하게 동작
+                await expand_btn.evaluate("el => el.click()")
                 await asyncio.sleep(0.5)
 
         weeks = await self._parse_weeks(iframe)

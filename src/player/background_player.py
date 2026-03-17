@@ -15,6 +15,7 @@ LMS가 수강 완료로 인식하도록 실제 재생 시간을 유지한다.
 import asyncio
 import json
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote, urlparse
@@ -372,6 +373,30 @@ async def _report_completion(
     log("  [완료 보고] 3회 시도 모두 실패 — 출석이 인정되지 않았을 수 있습니다")
 
 
+async def _fetch_learningx_duration(page: Page, learningx_url: str, log: Callable) -> float:
+    """
+    learningx URL에서 item_content_data.duration을 조회해 반환한다.
+    실패 시 0.0 반환.
+    """
+    m = re.search(r"/lecture_attendance/items/view/(\d+)", learningx_url)
+    cm = re.search(r"/courses/(\d+)/", page.url)
+    if not m or not cm:
+        return 0.0
+
+    item_id = m.group(1)
+    course_id = cm.group(1)
+    api_url = f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{course_id}/attendance_items/{item_id}"
+
+    try:
+        resp = await page.request.get(api_url)
+        if resp.status != 200:
+            return 0.0
+        data = json.loads(await resp.text())
+        return float((data.get("item_content_data") or {}).get("duration") or 0)
+    except Exception:
+        return 0.0
+
+
 async def _play_via_learningx_api(
     page: Page,
     learningx_url: str,
@@ -415,6 +440,10 @@ async def _play_via_learningx_api(
     api_url = f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{course_id}/attendance_items/{item_id}"
     log(f"  [LX] learningx item API 호출: {api_url}")
 
+    # page.evaluate(fetch) 방식: canvas.ssu.ac.kr 쿠키 포함, LTI 세션 쿠키는 미포함 가능
+    # 401 시 page.request 방식(Playwright 브라우저 컨텍스트 전체 쿠키 포함)으로 재시도
+    status = -1
+    body = ""
     try:
         result = await page.evaluate(f"""
             async () => {{
@@ -428,13 +457,24 @@ async def _play_via_learningx_api(
         """)
         status = result.get("s")
         body = result.get("b", "")
-        log(f"  [LX] API 응답: {status}")
-        if status != 200:
-            state.error = f"learningx API 오류: {status}"
-            return state
+        log(f"  [LX] API 응답(fetch): {status}")
     except Exception as e:
-        log(f"  [LX] API 호출 실패: {e}")
-        state.error = f"learningx API 호출 실패: {e}"
+        log(f"  [LX] API 호출 실패(fetch): {e}")
+
+    if status != 200:
+        log(f"  [LX] fetch 방식 실패({status}) — page.request 방식으로 재시도")
+        try:
+            resp = await page.request.get(api_url)
+            status = resp.status
+            body = await resp.text()
+            log(f"  [LX] API 응답(request): {status}")
+        except Exception as e:
+            log(f"  [LX] API 호출 실패(request): {e}")
+            state.error = f"learningx API 호출 실패: {e}"
+            return state
+
+    if status != 200:
+        state.error = f"learningx API 오류: {status}"
         return state
 
     try:
@@ -498,9 +538,36 @@ async def _play_via_progress_api(
             log(f"  [API] endat 미확정(endat=0 또는 sentinel 값) — fallback duration 사용: {fallback_duration:.1f}s")
             duration = fallback_duration
         else:
-            log("  [API] duration 파싱 실패 — endat 미확정이고 fallback duration도 없음")
-            state.error = "영상 길이를 알 수 없습니다."
-            return state
+            # progress_url에서 course_id / component_id를 추출해 attendance_items API로 duration 조회
+            # progress_url 형식: .../courses/{course_id}/sections/0/components/{component_id}/progress
+            _m = re.search(r"/courses/(\d+)/sections/\d+/components/(\d+)/progress", progress_url)
+            if _m:
+                _course_id, _component_id = _m.group(1), _m.group(2)
+                _items_url = (
+                    f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{_course_id}"
+                    f"/attendance_items/{_component_id}"
+                )
+                log(f"  [API] attendance_items API로 duration 조회 중: {_items_url}")
+                try:
+                    _resp = await page.request.get(_items_url)
+                    _body = await _resp.text()
+                    log(f"  [API] attendance_items 응답: status={_resp.status} body={_body[:200]!r}")
+                    _data = json.loads(_body)
+                    _api_duration = float(
+                        (_data.get("item_content_data") or {}).get("duration") or 0
+                    )
+                    if _api_duration > 0:
+                        log(f"  [API] attendance_items duration={_api_duration:.1f}s — 사용")
+                        duration = _api_duration
+                    else:
+                        log("  [API] attendance_items duration 값이 0 또는 없음")
+                except Exception as _e:
+                    log(f"  [API] attendance_items 조회 실패: {_e}")
+
+            if duration <= 0:
+                log("  [API] duration 파싱 실패 — endat 미확정이고 fallback duration도 없음")
+                state.error = "영상 길이를 알 수 없습니다."
+                return state
 
     # sl=1 세션 해제: player_url의 sl=1을 sl=0으로 교체해 commons를 재로드.
     # sl=1은 서버에 "현재 시청 중" 세션을 등록해 ErrAlreadyInView를 유발하므로,
@@ -735,6 +802,28 @@ async def play_lecture(
 
     # 네트워크 요청/응답 스니핑 (commons.ssu.ac.kr + canvas learningx 전체)
     # page 객체가 재사용되므로 리스너는 반드시 finally에서 제거해야 누적 방지
+
+    # attendance_items 응답에서 duration을 미리 추출 (debug 여부 무관하게 항상 동작)
+    # page.request.get()은 learningx API에 401을 반환하므로,
+    # 브라우저가 자동으로 보내는 요청의 응답을 sniff해서 fallback_duration을 채운다.
+    _sniffed_duration: list[float] = []  # mutable container (리스너 클로저에서 append)
+
+    async def _sniff_attendance_duration(response):
+        if "attendance_items" not in response.url:
+            return
+        if response.status != 200:
+            return
+        try:
+            data = json.loads(await response.text())
+            d = float((data.get("item_content_data") or {}).get("duration") or 0)
+            if d > 0 and not _sniffed_duration:
+                _sniffed_duration.append(d)
+                log(f"  [SNIFF] attendance_items duration={d:.1f}s 캡처")
+        except Exception:
+            pass
+
+    page.on("response", _sniff_attendance_duration)
+
     _on_request = None
     _on_response = None
     if debug:
@@ -783,6 +872,10 @@ async def play_lecture(
         page.on("response", _on_response)
 
     async def _cleanup():
+        try:
+            page.remove_listener("response", _sniff_attendance_duration)
+        except Exception:
+            pass
         if _on_request:
             try:
                 page.remove_listener("request", _on_request)
@@ -809,6 +902,7 @@ async def play_lecture(
             log,
             state,
             _using_fake_video,
+            _sniffed_duration,
         )
     finally:
         await _cleanup()
@@ -823,6 +917,7 @@ async def _play_lecture_inner(
     log: Callable,
     state: PlaybackState,
     _using_fake_video: bool,
+    _sniffed_duration: list[float] | None = None,
 ) -> PlaybackState:
     """play_lecture()의 실제 재생 로직. try-finally로 _cleanup() 보장을 위해 분리."""
     await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
@@ -838,14 +933,32 @@ async def _play_lecture_inner(
             log(f"       name={f.name!r}  url={f.url}")
 
         # learningx 플레이어 감지: tool_content가 learningx URL인 경우
-        # learningx API에서 viewer_url(commons TargetUrl 포함)을 가져와 Plan B로 실행
+        # LTI POST가 500으로 실패했을 가능성이 있으므로 networkidle까지 대기 후 재시도
         tool_frame = page.frame(name="tool_content")
         if tool_frame and "learningx" in tool_frame.url:
             log(f"    → learningx 플레이어 감지: {tool_frame.url}")
-            return await _play_via_learningx_api(page, tool_frame.url, on_progress, log, fallback_duration)
+            log("    → networkidle 대기 후 frame 재탐색...")
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30000)
+            except Exception:
+                pass
+            # networkidle 대기 중 learningx API로 duration을 미리 조회
+            # endat=0.00 강의는 Plan A 진행 시 fallback_duration이 없으면 재생 실패하므로
+            # 여기서 item_content_data.duration을 얻어 fallback_duration으로 사용
+            lx_duration = await _fetch_learningx_duration(page, tool_frame.url, log)
+            if lx_duration > 0 and fallback_duration <= 0:
+                log(f"    → learningx API duration={lx_duration:.1f}s — fallback_duration으로 사용")
+                fallback_duration = lx_duration
 
-        state.error = "비디오 프레임을 찾지 못했습니다."
-        return state
+            player_frame = await _find_player_frame(page)
+            if player_frame:
+                log("    → networkidle 후 commons frame 발견 — Plan A 계속")
+            else:
+                log("    → networkidle 후에도 commons frame 없음 — learningx API Plan B")
+                return await _play_via_learningx_api(page, tool_frame.url, on_progress, log, fallback_duration)
+        else:
+            state.error = "비디오 프레임을 찾지 못했습니다."
+            return state
     # frame이 나중에 navigate되면 URL이 바뀌므로 지금 즉시 저장
     player_url_snapshot = player_frame.url
     log(f"    → 성공: {player_url_snapshot}")
@@ -891,6 +1004,9 @@ async def _play_lecture_inner(
     if not frame:
         log("    → video frame 없음. 진도 API 직접 호출 방식으로 전환...")
         log(f"    → player URL: {player_url_snapshot}")
+        if _sniffed_duration and fallback_duration <= 0:
+            fallback_duration = _sniffed_duration[0]
+            log(f"    → sniff duration={fallback_duration:.1f}s → fallback_duration 적용")
         return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
     log(f"    → video frame 발견: {frame.url}")
 
@@ -1135,6 +1251,9 @@ async def _play_lecture_inner(
     # duration의 50% 미만에서 ended되면 Plan B로 전환해 progress API를 직접 호출한다.
     if state.ended and state.duration > 0 and state.current < state.duration * 0.5:
         log(f"[7] 영상이 예상보다 일찍 종료 ({state.current:.1f}s / {state.duration:.1f}s) — Plan B로 전환")
+        if _sniffed_duration and fallback_duration <= 0:
+            fallback_duration = _sniffed_duration[0]
+            log(f"    → sniff duration={fallback_duration:.1f}s → fallback_duration 적용")
         return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
 
     # Plan A 완료 후 progress API에 100% 직접 보고

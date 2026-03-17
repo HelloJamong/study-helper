@@ -103,9 +103,9 @@ def show_course_list(
     details: list[CourseDetail | None],
     user_id: str = "",
     latest_version: str | None = None,
-) -> Course | None:
+) -> tuple[Course, int] | None:
     """
-    과목 목록을 테이블로 표시하고 선택된 Course를 반환한다.
+    과목 목록을 테이블로 표시하고 (선택된 Course, 인덱스)를 반환한다.
     0 입력 시 None 반환 (종료). 'setting' 입력 시 설정 화면으로 이동.
     'auto' 입력 시 _AUTO_SENTINEL 반환 (자동 모드 진입 신호).
     details는 courses와 같은 순서의 CourseDetail 리스트 (로딩 실패 시 None).
@@ -125,7 +125,8 @@ def show_course_list(
         if choice.lower() == "auto":
             return _AUTO_SENTINEL  # type: ignore[return-value]
         if choice.isdigit() and 1 <= int(choice) <= len(courses):
-            return courses[int(choice) - 1]
+            idx = int(choice) - 1
+            return courses[idx], idx
         console.print("  [red]올바른 번호를 입력하세요.[/red]")
 
 
