@@ -47,13 +47,9 @@ def _redraw_course_list(
         console.print()
         console.print(
             Panel(
-                Text(
-                    f"  새로운 버전이 있습니다. 업데이트를 진행해 주세요.\n"
-                    f"  현재 버전: v{APP_VERSION}  /  최신 버전: {latest_version}\n"
-                    f"  [dim]docker compose pull && docker compose run --rm study-helper[/dim]",
-                    justify="left",
-                    style="bold yellow",
-                ),
+                f"  [bold yellow]새로운 버전이 있습니다. 업데이트를 진행해 주세요.[/bold yellow]\n"
+                f"  [bold yellow]현재 버전: v{APP_VERSION}  /  최신 버전: {latest_version}[/bold yellow]\n"
+                f"  [dim]docker compose pull && docker compose run --rm study-helper[/dim]",
                 border_style="yellow",
                 padding=(0, 2),
             )

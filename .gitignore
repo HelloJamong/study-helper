@@ -37,6 +37,10 @@ node_modules/
 .vscode/
 *.swp
 
+# OMC artifacts
+.omc/
+!.omc/skills/
+
 # Planning artifacts
 plan.md
 plan-*.md
