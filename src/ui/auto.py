@@ -269,6 +269,7 @@ async def run_auto_mode(scraper, courses, details) -> None:
         # readline 블로킹 스레드가 소비하지 못한 입력이 stdin에 남지 않도록 플러시
         try:
             import termios
+
             termios.tcflush(sys.stdin, termios.TCIFLUSH)
         except Exception:
             pass

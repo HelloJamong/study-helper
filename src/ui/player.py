@@ -164,6 +164,7 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
             # readline 블로킹 스레드가 소비하지 못한 입력이 stdin에 남지 않도록 플러시
             try:
                 import termios
+
                 termios.tcflush(sys.stdin, termios.TCIFLUSH)
             except Exception:
                 pass
