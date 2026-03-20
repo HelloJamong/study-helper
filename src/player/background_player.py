@@ -546,6 +546,12 @@ async def _play_via_progress_api(
         state.error = "진도 API URL을 파싱하지 못했습니다."
         return state
 
+    # fallback_duration이 endat보다 유의미하게 크면 실제 강의 길이로 교체한다.
+    # endat은 이전 시청 위치(이어보기 포인트)일 수 있어서 실제 duration보다 훨씬 작을 수 있다.
+    if fallback_duration > duration + 10:
+        log(f"  [API] endat({duration:.1f}s) < fallback_duration({fallback_duration:.1f}s) — fallback duration 사용")
+        duration = fallback_duration
+
     if duration <= 0:
         if fallback_duration > 0:
             log(f"  [API] endat 미확정(endat=0 또는 sentinel 값) — fallback duration 사용: {fallback_duration:.1f}s")

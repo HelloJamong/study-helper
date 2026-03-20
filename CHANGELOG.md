@@ -1,5 +1,18 @@
 # Changelog
 
+## [v26.03.14] - 2026-03-20
+
+### 수정
+- **`endat` 이전 시청 위치를 강의 길이로 오인하는 문제 수정** (`src/player/background_player.py`)
+  - 원인: `_play_via_progress_api()`에서 `_parse_player_url()`이 파싱한 `endat` 파라미터(이전 시청 위치)를 그대로 강의 총 길이(`duration`)로 사용하여 실제 강의(4407초)를 330초로 진도 보고 → LMS가 미시청으로 유지
+  - `fallback_duration`이 `endat` 기반 `duration`보다 10초 이상 크면 실제 강의 길이로 교체하도록 수정
+  - 결과: 자동 모드에서 이미 시청 완료된 강의가 매 스케줄마다 반복 재생·요약되던 문제 해소
+- **재생 완료 후 `0 + Enter` 종료 시 여러 번 입력해야 동작하는 문제 수정** (`src/ui/player.py`, `src/ui/auto.py`)
+  - 원인: `_stop_listener`(player.py) / `_input_listener`(auto.py)의 `run_in_executor(readline)` 블로킹 스레드가 asyncio 태스크 취소 후에도 계속 대기하다 다음 Enter 입력을 소비
+  - `finally` 블록에 `termios.tcflush(sys.stdin, TCIFLUSH)` 추가하여 stdin 버퍼 잔존 입력 제거
+
+---
+
 ## [v26.03.13] - 2026-03-17
 
 ### 수정
