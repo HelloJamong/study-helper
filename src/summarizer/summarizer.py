@@ -46,6 +46,22 @@ _EXTRA_PROMPT_TEMPLATE = """
 {extra}
 """
 
+# 비전채플 과목 전용 추가 섹션
+_CHAPEL_EXTRA_PROMPT = """\
+이 강의는 채플(기독교 예배·강연) 형식입니다. 아래 두 섹션을 추가로 작성하세요.
+
+[강연자 소개]
+강연자의 이름, 소속(교회·기관·학교 등), 직함 또는 하는 일, 운영 단체를 텍스트에서 언급된 내용을 바탕으로 정리하세요.
+강연자 정보가 전혀 언급되지 않으면 이 섹션을 생략하세요.
+
+[성경 말씀]
+강연에서 직접 인용되거나 언급된 성경 구절을 목록으로 정리하세요.
+형식 예시:
+1. 마태복음 5장 3절 — "심령이 가난한 자는 복이 있나니..."
+2. 요한복음 3장 16절
+성경 말씀이 전혀 언급되지 않으면 이 섹션을 생략하세요.\
+"""
+
 _GEMINI_MODELS = [
     ("gemini-2.5-flash", "Gemini 2.5 Flash  (무료 티어 지원, 권장)"),
     ("gemini-2.0-flash", "Gemini 2.0 Flash  (무료 티어 지원)"),
@@ -59,7 +75,9 @@ GEMINI_MODEL_LABELS = [m[1] for m in _GEMINI_MODELS]
 GEMINI_DEFAULT_MODEL = GEMINI_MODEL_IDS[0]
 
 
-def summarize(txt_path: Path, agent: str, api_key: str, model: str, extra_prompt: str = "") -> Path:
+def summarize(
+    txt_path: Path, agent: str, api_key: str, model: str, extra_prompt: str = "", course_name: str = ""
+) -> Path:
     """
     텍스트 파일을 AI로 요약한다.
 
@@ -69,6 +87,7 @@ def summarize(txt_path: Path, agent: str, api_key: str, model: str, extra_prompt
         api_key:      해당 에이전트 API 키
         model:        사용할 모델 ID
         extra_prompt: 사용자 추가 지시사항 (기본 프롬프트 뒤에 추가)
+        course_name:  과목명 (비전채플 감지에 사용)
 
     Returns:
         생성된 _summarized.txt 파일 경로
@@ -78,6 +97,8 @@ def summarize(txt_path: Path, agent: str, api_key: str, model: str, extra_prompt
         raise ValueError("텍스트 파일이 비어 있습니다.")
 
     prompt = _SUMMARY_PROMPT.format(text=text)
+    if "비전채플" in course_name:
+        prompt += _EXTRA_PROMPT_TEMPLATE.format(extra=_CHAPEL_EXTRA_PROMPT)
     if extra_prompt:
         prompt += _EXTRA_PROMPT_TEMPLATE.format(extra=extra_prompt)
 

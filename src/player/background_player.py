@@ -522,11 +522,17 @@ async def _play_via_progress_api(
     on_progress: Callable[[PlaybackState], None] | None,
     log: Callable,
     fallback_duration: float = 0.0,
+    existing_commons_frame: "Frame | None" = None,
 ) -> PlaybackState:
     """
     headless에서 플레이어 로드에 실패할 때 사용하는 Plan B.
 
     진도 API(TargetUrl)를 주기적으로 호출해서 LMS가 수강 완료로 인식하도록 한다.
+
+    existing_commons_frame:
+        Plan A에서 이미 로드된 sl=1 commons 프레임. 제공 시 sl=0 재로드를 건너뛰고
+        기존 프레임에서 JSONP를 주입한다. movie 콘텐츠에서 sl=0 전환 후에도
+        ErrAlreadyInView가 발생하는 문제를 근본적으로 해결한다.
 
     ErrAlreadyInView 우회 전략:
     - sl=1 파라미터로 commons.ssu.ac.kr에 뷰 세션이 등록된 상태에서
@@ -585,24 +591,36 @@ async def _play_via_progress_api(
                 state.error = "영상 길이를 알 수 없습니다."
                 return state
 
-    # sl=1 세션 해제: player_url의 sl=1을 sl=0으로 교체해 commons를 재로드.
-    # sl=1은 서버에 "현재 시청 중" 세션을 등록해 ErrAlreadyInView를 유발하므로,
-    # sl=0으로 재방문하면 세션 충돌 없이 진도 API를 호출할 수 있다.
-    # 재로드 후 그 commons 프레임 내부에서 JSONP로 progress를 보고한다.
-    sl0_url = player_url.replace("sl=1", "sl=0")
+    # ErrAlreadyInView 대응 전략:
+    # sl=0으로 재로드하면 서버 측 sl=1 세션이 닫히지 않아 계속 ErrAlreadyInView 발생.
+    # sl=1으로 재로드하면 현재 세션이 서버에 활성 뷰어로 재등록되어 진도 API 수락됨.
+    #
+    # - existing_commons_frame 제공 시: page.frames에서 여전히 살아있는 경우 재사용.
+    #   살아있지 않으면 sl=1 재로드로 폴백.
+    # - 미제공 시: sl=1로 commons를 재로드해 현재 세션을 서버에 재등록 후 JSONP 호출.
     commons_frame: Frame | None = None
-    try:
-        log(f"  [API] sl=0으로 commons 재로드: {sl0_url[:80]}...")
-        await page.goto(sl0_url, wait_until="domcontentloaded", timeout=20000)
-        await asyncio.sleep(2)
-        # sl=0으로 로드된 commons frame 탐색
-        for f in page.frames:
-            if "commons.ssu.ac.kr" in f.url:
-                commons_frame = f
-                break
-        log(f"  [API] commons frame({'발견' if commons_frame else '없음'})")
-    except Exception as e:
-        log(f"  [API] commons 재로드 실패 ({e}) — page.request.get으로 폴백")
+    if existing_commons_frame is not None:
+        # 전달된 frame이 아직 page.frames에 살아있는지 확인
+        live_frames = page.frames
+        if existing_commons_frame in live_frames:
+            commons_frame = existing_commons_frame
+            log("  [API] 기존 sl=1 commons frame 재사용 — 재로드 건너뜀")
+        else:
+            log("  [API] 전달된 commons frame이 이미 detach됨 — sl=1 재로드로 폴백")
+
+    if commons_frame is None:
+        try:
+            log(f"  [API] sl=1로 commons 재로드 (세션 재확립): {player_url[:80]}...")
+            await page.goto(player_url, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(2)
+            # sl=1로 로드된 commons frame 탐색
+            for f in page.frames:
+                if "commons.ssu.ac.kr" in f.url:
+                    commons_frame = f
+                    break
+            log(f"  [API] commons frame({'발견' if commons_frame else '없음'})")
+        except Exception as e:
+            log(f"  [API] commons 재로드 실패 ({e}) — page.request.get으로 폴백")
 
     log("  [API] 진도 API 방식으로 재생 시뮬레이션")
     log(f"  [API] duration={duration:.1f}s  progress_url={progress_url}")
@@ -845,7 +863,9 @@ async def play_lecture(
     _sniffed_duration: list[float] = []  # mutable container (리스너 클로저에서 append)
 
     async def _sniff_attendance_duration(response):
-        if "attendance_items" not in response.url:
+        # attendance_items API 또는 lecture_attendance LTI POST 응답에서 duration 추출
+        # mp4 콘텐츠는 attendance_items를 직접 호출하지 않고 lecture_attendance POST로만 응답이 옴
+        if "attendance_items" not in response.url and "lecture_attendance/items/view" not in response.url:
             return
         if response.status != 200:
             return
@@ -854,7 +874,7 @@ async def play_lecture(
             d = float((data.get("item_content_data") or {}).get("duration") or 0)
             if d > 0 and not _sniffed_duration:
                 _sniffed_duration.append(d)
-                log(f"  [SNIFF] attendance_items duration={d:.1f}s 캡처")
+                log(f"  [SNIFF] duration={d:.1f}s 캡처 ({response.url.split('/')[-1]})")
         except Exception:
             pass
 
@@ -1148,7 +1168,16 @@ async def _play_lecture_inner(
                         break
                 except Exception:
                     pass
-        return await _play_via_progress_api(page, player_url_snapshot, on_progress, log, fallback_duration)
+        # Plan A에서 열린 sl=1 commons 프레임을 Plan B에 전달:
+        # sl=0 재로드 없이 동일 세션 컨텍스트에서 JSONP를 호출하므로 ErrAlreadyInView 방지
+        return await _play_via_progress_api(
+            page,
+            player_url_snapshot,
+            on_progress,
+            log,
+            fallback_duration,
+            existing_commons_frame=player_frame,
+        )
     log(f"    → video frame 발견: {frame.url}")
 
     # 6. video 요소 duration 대기

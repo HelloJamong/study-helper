@@ -236,6 +236,7 @@ async def run_download(page, lec, course, audio_only: bool = False, both: bool =
                                         api_key=api_key,
                                         model=model or GEMINI_DEFAULT_MODEL,
                                         extra_prompt=Config.SUMMARY_PROMPT_EXTRA,
+                                        course_name=course.long_name,
                                     ),
                                 )
                     console.print("  [bold green]AI 요약 완료![/bold green]")

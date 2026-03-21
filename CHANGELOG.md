@@ -1,5 +1,24 @@
 # Changelog
 
+## [v26.03.16] - 2026-03-21
+
+### 추가
+- **비전채플 과목 전용 AI 요약 섹션** (`src/summarizer/summarizer.py`, `src/ui/download.py`)
+  - 과목명에 "비전채플"이 포함된 경우 요약 결과에 두 섹션을 자동 추가
+  - `[강연자 소개]`: 강연자 이름·소속·직함·운영 단체 (텍스트 미언급 시 생략)
+  - `[성경 말씀]`: 강연 중 인용·언급된 성경 구절 목록 (미언급 시 생략)
+  - `run_download()`에서 `course.long_name`을 `summarize()`에 전달하여 과목별 프롬프트 분기
+
+### 수정
+- **`ErrAlreadyInView` 반복 발생으로 진도 미등록 문제 수정** (`src/player/background_player.py`)
+  - 원인 1: Plan B(`_play_via_progress_api`) 진입 시 commons 프레임을 `sl=0`으로 재로드하면 서버 측 sl=1 세션이 닫히지 않아 이후 JSONP 호출이 계속 `ErrAlreadyInView`를 반환
+  - 원인 2: play 버튼 클릭 후 원본 `em/...` commons 프레임이 `flashErrorPage.html`로 navigate되어 Python Frame 객체가 `page.frames`에서 분리(detach)되는데, 이를 감지하지 못해 재로드 경로가 비정상 동작
+  - `existing_commons_frame` 유효성 검증을 `is not None` 단순 체크에서 `page.frames` 멤버십 체크로 강화
+  - detach된 경우 `player_url`(sl=1 포함)로 `page.goto` 재로드 — 서버에 현재 세션을 active viewer로 재등록 후 JSONP 호출하여 ErrAlreadyInView 우회
+  - Plan A→B 전환 시 `existing_commons_frame=player_frame` 전달로, commons frame이 살아있는 경우 재로드 없이 동일 sl=1 세션에서 JSONP 직접 주입
+
+---
+
 ## [v26.03.15] - 2026-03-20
 
 ### 수정
