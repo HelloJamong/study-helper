@@ -1,5 +1,16 @@
 # Changelog
 
+## [v26.03.18] - 2026-03-23
+
+### 수정
+- **README curl 다운로드 경로 수정** (`README.md`)
+  - GitHub 사용자명 오기 수정: `igor0670` → `HelloJamong`
+  - `.env.example` 다운로드 URL: `default.env.example` → `.env.example` (릴리즈 asset 파일명 일치)
+- **릴리즈 asset 파일명 수정** (`.github/workflows/release.yml`)
+  - 릴리즈 업로드 파일명이 `default.env.example`로 올라가던 문제 수정 — `.env.example`로 통일
+
+---
+
 ## [v26.03.17] - 2026-03-23
 
 ### 수정
