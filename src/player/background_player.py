@@ -599,23 +599,81 @@ async def _play_via_progress_api(
     #   살아있지 않으면 sl=1 재로드로 폴백.
     # - 미제공 시: sl=1로 commons를 재로드해 현재 세션을 서버에 재등록 후 JSONP 호출.
     commons_frame: Frame | None = None
+    _flash_block_handler: list = []  # [handler] — 루프 종료 후 해제용
+
     if existing_commons_frame is not None:
-        # 전달된 frame이 아직 page.frames에 살아있는지 확인
+        # 전달된 frame이 아직 page.frames에 살아있고 flashErrorPage로 이동하지 않았는지 확인.
+        # flashErrorPage로 이동한 frame은 sl=1 세션이 무효화된 상태이므로 재사용 불가.
         live_frames = page.frames
+        # flashErrorPage를 route.fulfill()로 빈 HTML 대체 시: frame URL은 flashErrorPage.html로
+        # 바뀌지만 서버 측 sl=1 세션은 살아있음(서버에 요청이 도달하지 않으므로).
+        # → flashErrorPage URL이어도 frame이 live하면 재사용 허용.
         if existing_commons_frame in live_frames:
             commons_frame = existing_commons_frame
-            log("  [API] 기존 sl=1 commons frame 재사용 — 재로드 건너뜀")
+            if "flashErrorPage" in existing_commons_frame.url:
+                log("  [API] 기존 commons frame이 flashErrorPage(fulfill)로 전환됨 — 세션 유지로 재사용")
+            else:
+                log("  [API] 기존 sl=1 commons frame 재사용 — 재로드 건너뜀")
         else:
             log("  [API] 전달된 commons frame이 이미 detach됨 — sl=1 재로드로 폴백")
 
     if commons_frame is None:
+        # ErrAlreadyInView 근본 원인: 초기 page.goto(lecture_url) 시 commons iframe이
+        # viewer_url(sl=1)로 자동 로드되어 서버에 뷰 세션이 등록됨.
+        # 이 세션이 살아있는 한 이후 모든 progress API 호출이 ErrAlreadyInView로 거부됨.
+        # → sl=0 URL로 요청해 서버가 세션을 닫도록 유도한 뒤 sl=1 재로드.
+        # 주의: Plan A 실패 후 commons frame은 이미 flashErrorPage로 이동해 sl=1이 URL에 없음.
+        #       player_url(sl=1)을 직접 변환해 sl=0 요청을 보낸다.
+        if "sl=1" in player_url:
+            _sl0_url = player_url.replace("sl=1", "sl=0")
+            try:
+                log(f"  [API] 기존 sl=1 세션 종료 시도 (sl=0 GET): {_sl0_url[:80]}...")
+                await page.request.get(_sl0_url, headers={"Referer": "https://canvas.ssu.ac.kr/"})
+                await asyncio.sleep(2)
+                log("  [API] sl=0 요청 완료")
+            except Exception as _e:
+                log(f"  [API] sl=0 요청 실패 ({_e}) — 계속 진행")
+
         try:
             log(f"  [API] sl=1로 commons 재로드 (세션 재확립): {player_url[:80]}...")
-            await page.goto(player_url, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(2)
-            # sl=1로 로드된 commons frame 탐색
+
+            # ErrAlreadyInView 근본 원인 해결 전략:
+            # 1. about:blank 이동: 기존 canvas iframe 세션을 DOM에서 제거해 서버 측 세션 충돌 최소화
+            # 2. uni-player*.js 차단: 플레이어 JS가 자체 initUniPlayerEventListener를 실행해
+            #    서버에 독립 뷰어 세션을 등록하면 우리 JSONP가 ErrAlreadyInView를 받음.
+            #    JS를 차단하면 JSONP가 유일한 세션 소유자가 됨.
+            # 3. flashErrorPage 차단을 진도 루프 전체로 연장: 루프 중 플레이어가
+            #    flashErrorPage로 이동하면 sl=1 세션이 무효화됨.
+            async def _block_flash_error_page(route):
+                # abort() 대신 빈 HTML: abort()는 frame을 chrome-error:// broken 상태로 만들어
+                # JSONP <script> cross-origin 로드를 차단함.
+                await route.fulfill(
+                    status=200,
+                    headers={"Content-Type": "text/html"},
+                    body=b"<html><body></body></html>",
+                )
+
+            async def _block_player_js(route):
+                await route.abort()
+
+            await page.route("**/flashErrorPage.html", _block_flash_error_page)
+            await page.route("**/uni-player*.js*", _block_player_js)
+            _flash_block_handler.append(_block_flash_error_page)  # 루프 후 해제
+            try:
+                # 기존 iframe 세션 DOM 정리: canvas 컨텍스트 해제
+                try:
+                    await page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
+                await page.goto(player_url, wait_until="domcontentloaded", timeout=20000)
+                await asyncio.sleep(5)  # 세션 안정화 대기 (3 → 5초)
+            finally:
+                # 플레이어 JS 차단만 해제 — flashErrorPage는 루프 전체에서 유지
+                await page.unroute("**/uni-player*.js*", _block_player_js)
+            # sl=1로 로드된 commons frame 탐색 (flashErrorPage 제외)
             for f in page.frames:
-                if "commons.ssu.ac.kr" in f.url:
+                if "commons.ssu.ac.kr" in f.url and "flashErrorPage" not in f.url:
                     commons_frame = f
                     break
             log(f"  [API] commons frame({'발견' if commons_frame else '없음'})")
@@ -667,26 +725,47 @@ async def _play_via_progress_api(
                 )
                 log(f"  [API] 진도 보고: {int(current)}s/{int(duration)}s")
 
-                if commons_frame:
+                reported = False
+                # 1. page.evaluate fetch: canvas.ssu.ac.kr 동일 오리진으로 호출해
+                #    ErrAlreadyInView를 우회한다 (readystream 등 JSONP가 실패하는 콘텐츠 대응).
+                try:
+                    eval_result = await page.evaluate(f"""
+                        async () => {{
+                            try {{
+                                const resp = await fetch({json.dumps(report_target)});
+                                return {{s: resp.status, b: (await resp.text()).slice(0, 300)}};
+                            }} catch(e) {{
+                                return {{s: -1, b: e.message}};
+                            }}
+                        }}
+                    """)
+                    eval_status = eval_result.get("s")
+                    eval_body = eval_result.get("b", "")
+                    log(f"  [API] 응답 (page ctx): {eval_status}  body={eval_body[:200]!r}")
+                    if eval_status == 200 and '"result":true' in eval_body:
+                        reported = True
+                except Exception as pe:
+                    log(f"  [API] page ctx fetch 실패 ({pe}) — JSONP/fallback으로 폴백")
+
+                # 2. JSONP (commons_frame)
+                if not reported and commons_frame:
                     try:
                         body = await _call_progress_jsonp(commons_frame, report_target, callback)
                         log(f"  [API] 응답 (JSONP): {body[:200]!r}")
+                        reported = True
                     except Exception as je:
                         log(f"  [API] JSONP 실패 ({je}) — page.request.get으로 폴백")
                         commons_frame = None
-                        response = await page.request.get(
-                            report_target,
-                            headers={"Referer": "https://commons.ssu.ac.kr/"},
-                        )
-                        body = await response.text()
-                        log(f"  [API] 응답 (fallback): {response.status}  body={body[:200]!r}")
-                else:
+
+                # 3. page.request.get 폴백
+                if not reported:
                     response = await page.request.get(
                         report_target,
                         headers={"Referer": "https://commons.ssu.ac.kr/"},
                     )
                     body = await response.text()
-                    log(f"  [API] 응답: {response.status}  body={body[:200]!r}")
+                    log(f"  [API] 응답 (fallback): {response.status}  body={body[:200]!r}")
+
                 next_report = current + report_interval
             except Exception as e:
                 log(f"  [API] 진도 보고 실패: {e} — 다음 폴링에서 재시도")
@@ -697,6 +776,13 @@ async def _play_via_progress_api(
 
     # 재생 루프 종료 후 100% 완료 보고 — commons_frame 재사용으로 ErrAlreadyInView 방지
     await _report_completion(page, player_url, state.duration, log, commons_frame)
+
+    # flashErrorPage 차단 해제 (루프 전체 동안 유지했던 route 정리)
+    if _flash_block_handler:
+        try:
+            await page.unroute("**/flashErrorPage.html", _flash_block_handler[0])
+        except Exception:
+            pass
 
     return state
 
@@ -801,55 +887,64 @@ async def play_lecture(
     # 같은 객체를 참조하도록 list[float]로 감쌈. [0]이 현재 duration.
     _shared_duration: list[float] = [fallback_duration]
 
-    if fallback_duration > 0:
-        log(f"[0] H.264 우회: lazy fake webm 등록 (초기 duration={fallback_duration:.0f}s, 실제 요청 시 생성)")
-        try:
+    # fallback_duration 유무와 무관하게 항상 fake video route를 등록한다.
+    # readystream(UPF) 컨텐츠는 fallback_duration=0으로 호출되지만,
+    # commons 플레이어가 preloader.mp4로 H.264 코덱 체크를 수행하고
+    # 실패 시 즉시 flashErrorPage로 이동한다.
+    # attendance_items 스니핑(_sniffed_duration)은 preloader.mp4 요청보다 먼저 완료되므로
+    # 여기서 항상 route를 등록해 두면 실제 요청 시 올바른 duration으로 fake WebM을 생성할 수 있다.
+    log(f"[0] H.264 우회: lazy fake webm 등록 (초기 duration={fallback_duration:.0f}s, 실제 요청 시 생성)")
+    try:
 
-            async def _serve_fake(route, request):
-                # 요청 시점의 _shared_duration[0] 사용 (sniff/meta로 교정된 값 반영)
-                dur = _shared_duration[0]
-                if not _fake_video_cache:
-                    log(f"[0] fake webm 생성 중 (duration={dur:.0f}s)...")
-                    try:
-                        data = await _create_fake_webm(dur)
-                        _fake_video_cache.append(data)
-                        log(f"[0] fake webm 생성 완료 ({len(data):,} bytes)")
-                    except Exception as e:
-                        log(f"[0] fake webm 생성 실패 ({e}) — 원본으로 폴백")
-                        await route.continue_()
-                        return
-                await route.fulfill(
-                    status=200,
-                    headers={"Content-Type": "video/webm"},
-                    body=_fake_video_cache[0],
-                )
+        async def _serve_fake(route, request):
+            # _sniffed_duration 우선: attendance_items 응답 스니핑으로 채워지며
+            # preloader.mp4 요청보다 먼저 완료된다.
+            # _shared_duration은 [2.5] 단계에서 meta/sniff 값으로 교정된다.
+            dur = _sniffed_duration[0] if _sniffed_duration else _shared_duration[0]
+            if dur <= 0:
+                dur = 300  # 최소 5분 fallback (duration 미확정 시)
+            if not _fake_video_cache:
+                log(f"[0] fake webm 생성 중 (duration={dur:.0f}s)...")
+                try:
+                    data = await _create_fake_webm(dur)
+                    _fake_video_cache.append(data)
+                    log(f"[0] fake webm 생성 완료 ({len(data):,} bytes)")
+                except Exception as e:
+                    log(f"[0] fake webm 생성 실패 ({e}) — 원본으로 폴백")
+                    await route.continue_()
+                    return
+            await route.fulfill(
+                status=200,
+                headers={"Content-Type": "video/webm"},
+                body=_fake_video_cache[0],
+            )
 
-            await page.route("**/*.mp4", _serve_fake)
-            # canPlayType / isTypeSupported 오버라이드:
-            # Chromium은 H.264 미지원 → canPlayType("video/mp4; codecs=avc1") = ""
-            # 플레이어가 이 값을 보고 MP4 요청 없이 바로 flashErrorPage로 분기.
-            # init script로 'probably'를 반환하게 속이면 MP4를 실제로 요청하고,
-            # 그 요청을 위 route가 VP8 WebM으로 대체한다.
-            await page.add_init_script("""
-                (function() {
-                    if (window.MediaSource && MediaSource.isTypeSupported) {
-                        var _origMSE = MediaSource.isTypeSupported.bind(MediaSource);
-                        MediaSource.isTypeSupported = function(type) {
-                            if (type && (type.indexOf('avc') !== -1 || type.indexOf('mp4') !== -1)) return true;
-                            return _origMSE(type);
-                        };
-                    }
-                    var _origCPT = HTMLVideoElement.prototype.canPlayType;
-                    HTMLVideoElement.prototype.canPlayType = function(type) {
-                        if (type && (type.indexOf('mp4') !== -1 || type.indexOf('avc') !== -1 || type.indexOf('h264') !== -1)) return 'probably';
-                        return _origCPT.call(this, type);
+        await page.route("**/*.mp4", _serve_fake)
+        # canPlayType / isTypeSupported 오버라이드:
+        # Chromium은 H.264 미지원 → canPlayType("video/mp4; codecs=avc1") = ""
+        # 플레이어가 이 값을 보고 MP4 요청 없이 바로 flashErrorPage로 분기.
+        # init script로 'probably'를 반환하게 속이면 MP4를 실제로 요청하고,
+        # 그 요청을 위 route가 VP8 WebM으로 대체한다.
+        await page.add_init_script("""
+            (function() {
+                if (window.MediaSource && MediaSource.isTypeSupported) {
+                    var _origMSE = MediaSource.isTypeSupported.bind(MediaSource);
+                    MediaSource.isTypeSupported = function(type) {
+                        if (type && (type.indexOf('avc') !== -1 || type.indexOf('mp4') !== -1)) return true;
+                        return _origMSE(type);
                     };
-                })();
-            """)
-            _using_fake_video = True
-            log("[0] MP4 인터셉트 (*.mp4 전체) + canPlayType 오버라이드 등록 완료")
-        except Exception as e:
-            log(f"[0] route 등록 실패 ({e}) — 원본 스트림으로 계속")
+                }
+                var _origCPT = HTMLVideoElement.prototype.canPlayType;
+                HTMLVideoElement.prototype.canPlayType = function(type) {
+                    if (type && (type.indexOf('mp4') !== -1 || type.indexOf('avc') !== -1 || type.indexOf('h264') !== -1)) return 'probably';
+                    return _origCPT.call(this, type);
+                };
+            })();
+        """)
+        _using_fake_video = True
+        log("[0] MP4 인터셉트 (*.mp4 전체) + canPlayType 오버라이드 등록 완료")
+    except Exception as e:
+        log(f"[0] route 등록 실패 ({e}) — 원본 스트림으로 계속")
 
     # 1. 강의 페이지로 이동
     log(f"[1] 강의 페이지 이동: {lecture_url}")
@@ -906,6 +1001,29 @@ async def play_lecture(
         await page.route("**/commons.ssu.ac.kr/em/**", _fix_commons_endat)
     except Exception as e:
         log(f"[0] commons endat route 등록 실패: {e}")
+
+    # flashErrorPage를 초기부터 차단한다.
+    # commons 플레이어가 H.264 재생 실패 시 flashErrorPage로 이동하면 sl=1 세션이 무효화되어
+    # Plan B에서 ErrAlreadyInView가 발생한다.
+    # page.goto(lecture_url) 이전에 차단하면 commons iframe이 원래 URL을 유지하므로
+    # Plan B의 existing_commons_frame 재사용 경로가 동작하고 JSONP 진도 보고가 성공한다.
+    _block_flash_global_handler: list = []
+
+    async def _block_flash_global(route):
+        # abort() 대신 빈 HTML fulfill: abort()는 frame을 chrome-error:// 상태로 만들어
+        # JSONP <script> 로드를 차단한다. 빈 페이지로 대체하면 frame이 정상 상태 유지.
+        await route.fulfill(
+            status=200,
+            headers={"Content-Type": "text/html"},
+            body=b"<html><body></body></html>",
+        )
+
+    try:
+        await page.route("**/flashErrorPage.html", _block_flash_global)
+        _block_flash_global_handler.append(_block_flash_global)
+        log("[0] flashErrorPage 초기 차단 등록 완료")
+    except Exception as e:
+        log(f"[0] flashErrorPage 차단 등록 실패: {e}")
 
     _on_request = None
     _on_response = None
@@ -978,6 +1096,11 @@ async def play_lecture(
             await page.unroute("**/commons.ssu.ac.kr/em/**")
         except Exception:
             pass
+        if _block_flash_global_handler:
+            try:
+                await page.unroute("**/flashErrorPage.html", _block_flash_global_handler[0])
+            except Exception:
+                pass
 
     try:
         return await _play_lecture_inner(

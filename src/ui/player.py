@@ -161,10 +161,15 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
                 await stop_task
             except asyncio.CancelledError:
                 pass
-            # readline 블로킹 스레드가 소비하지 못한 입력이 stdin에 남지 않도록 플러시
+            # readline 블로킹 스레드 해제: 가짜 개행을 stdin에 주입해 스레드를 깨운 뒤 플러시.
+            # stop_task.cancel() 후에도 run_in_executor 스레드는 readline에서 블로킹 중이므로
+            # 다음 Prompt.ask 입력을 가로채는 문제가 생긴다. \n 주입으로 즉시 해제 후 플러시.
             try:
+                import os
                 import termios
 
+                os.write(sys.stdin.fileno(), b"\n")
+                await asyncio.sleep(0.05)
                 termios.tcflush(sys.stdin, termios.TCIFLUSH)
             except Exception:
                 pass

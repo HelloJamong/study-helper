@@ -1,5 +1,22 @@
 # Changelog
 
+## [v26.03.17] - 2026-03-23
+
+### 수정
+- **readystream(content_type=15) 강의 진도 미등록 문제 수정** (`src/player/background_player.py`)
+  - 원인 1: `route.abort()`로 `flashErrorPage.html` 차단 시 Playwright frame이 `chrome-error://chromewebdata/` broken state로 전환되어 이후 JSONP `<script>` cross-origin 로드 차단
+  - 원인 2: `flashErrorPage`로 navigate된 frame을 재사용 불가로 판단하여 sl=1 세션을 폐기하고 새 세션 생성 → 서버가 기존 세션을 여전히 점유 중으로 인식해 `ErrAlreadyInView` 반복
+  - `_block_flash_global` / `_block_flash_error_page`: `route.abort()` → `route.fulfill(빈 HTML)`로 변경 — fulfill은 서버에 요청이 도달하지 않으므로 서버 측 sl=1 세션을 살려둔 채 frame을 정상 상태로 유지
+  - frame 재사용 조건 완화: fulfill 방식으로 대체된 flashErrorPage URL이어도 live frame이면 기존 sl=1 세션 그대로 재사용
+  - fake video route(VP8 WebM)를 `fallback_duration` 유무와 무관하게 항상 등록 — preloader.mp4 codec check를 초기화 시점에 확실히 통과시켜 H.264 미지원 환경에서 flashErrorPage 진입 자체를 차단
+
+### 추가
+- **과목 강의 목록 로딩 실패 시 에러 로그 파일 저장** (`src/scraper/course_scraper.py`)
+  - `fetch_all_details()`에서 예외 발생 시 전체 traceback을 `logs/YYYYMMDD_HHMMSS_scraper_error.log`에 저장
+  - 기존에는 TUI 화면에만 출력되어 `- / -` 원인 파악 불가 → 파일 저장으로 사후 분석 가능
+
+---
+
 ## [v26.03.16] - 2026-03-21
 
 ### 추가

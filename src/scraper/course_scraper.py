@@ -1,6 +1,10 @@
 import asyncio
 import re
+import sys
+import traceback
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 
 from playwright.async_api import Frame, Page, async_playwright
 
@@ -223,7 +227,17 @@ class CourseScraper:
                 try:
                     results[idx] = await self._fetch_lectures_on(page, course)
                 except Exception as e:
-                    self._log(f"강의 로딩 실패 ({course.long_name}): {e}")
+                    tb = traceback.format_exc()
+                    msg = f"강의 로딩 실패 ({course.long_name}): {e}\n{tb}"
+                    self._log(msg)
+                    try:
+                        log_dir = Path(__file__).parent.parent.parent / "logs"
+                        log_dir.mkdir(exist_ok=True)
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        log_path = log_dir / f"{ts}_scraper_error.log"
+                        log_path.write_text(msg, encoding="utf-8")
+                    except Exception:
+                        print(msg, file=sys.stderr)
                     results[idx] = None
                 finally:
                     await page.close()
