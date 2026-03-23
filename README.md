@@ -51,10 +51,10 @@
 
 ### 1. `docker-compose.yml` 다운로드
 
-[최신 릴리즈](https://github.com/igor0670/study-helper/releases/latest)에서 `docker-compose.yml`을 다운로드하거나 아래 명령어로 받습니다.
+[최신 릴리즈](https://github.com/HelloJamong/study-helper/releases/latest)에서 `docker-compose.yml`을 다운로드하거나 아래 명령어로 받습니다.
 
 ```bash
-curl -O https://raw.githubusercontent.com/igor0670/study-helper/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/HelloJamong/study-helper/main/docker-compose.yml
 ```
 
 ### 2. `.env` 파일 생성
@@ -62,7 +62,7 @@ curl -O https://raw.githubusercontent.com/igor0670/study-helper/main/docker-comp
 `.env.example`을 다운로드 후 `.env`로 이름을 변경합니다.
 
 ```bash
-curl -O https://raw.githubusercontent.com/igor0670/study-helper/main/.env.example
+curl -L -o .env.example https://github.com/HelloJamong/study-helper/releases/latest/download/default.env.example
 mv .env.example .env
 ```
 
