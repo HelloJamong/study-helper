@@ -62,7 +62,7 @@ curl -O https://raw.githubusercontent.com/HelloJamong/study-helper/main/docker-c
 `.env.example`을 다운로드 후 `.env`로 이름을 변경합니다.
 
 ```bash
-curl -L -o .env.example https://github.com/HelloJamong/study-helper/releases/latest/download/default.env.example
+curl -L -o .env.example https://github.com/HelloJamong/study-helper/releases/latest/download/.env.example
 mv .env.example .env
 ```
 
