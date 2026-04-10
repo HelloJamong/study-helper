@@ -1,5 +1,19 @@
 # Changelog
 
+## [v26.04.01] - 2026-04-11
+
+### 수정
+- **Chromium 메모리 누수 방지 플래그 추가** (`src/scraper/course_scraper.py`)
+  - `--js-flags=--max-old-space-size=1024`: V8 JS 힙 상한을 1 GB로 제한 — 상한 초과 시 강제 GC 트리거
+  - `--aggressive-cache-discard`: 메모리 압박 감지 시 탭 캐시를 적극 해제
+  - `--renderer-process-limit=2`: 렌더러 프로세스 수 제한 — 탭 하나만 사용하므로 기본값(CPU 코어 수) 대비 메모리 절감
+- **자동 모드 강의 간 페이지 초기화** (`src/ui/auto.py`)
+  - 강의 처리 완료 후 `about:blank`로 이동하여 Chromium 렌더러 메모리(비디오 디코드 버퍼, JS 힙, DOM) 즉시 해제
+  - `finally` 블록에 추가 — 재생 성공·실패·예외 모든 경우에 실행
+  - 다수 강의 연속 처리 시 메모리가 7~8 GB까지 증가하던 문제 해소
+
+---
+
 ## [v26.03.18] - 2026-03-23
 
 ### 수정

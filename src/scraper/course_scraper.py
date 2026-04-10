@@ -70,6 +70,10 @@ class CourseScraper:
             "--disable-gpu",
             "--window-size=1280,720",
             "--password-store=basic",
+            # 메모리 누수 방지: JS 힙 상한 · 메모리 압박 시 캐시 해제 · 렌더러 수 제한
+            "--js-flags=--max-old-space-size=1024",
+            "--aggressive-cache-discard",
+            "--renderer-process-limit=2",
         ]
         # Chrome(H.264 포함) 우선 시도 — ARM64 등 미지원 환경에서는 Chromium으로 fallback
         try:

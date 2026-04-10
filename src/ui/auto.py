@@ -255,6 +255,11 @@ async def run_auto_mode(scraper, courses, details) -> None:
                     await _process_lecture(scraper, course, lec, stop_event)
                 finally:
                     playing_event.clear()
+                    # 강의 완료 후 페이지 초기화 — Chromium 렌더러 메모리 해제
+                    try:
+                        await scraper._page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+                    except Exception:
+                        pass
 
             console.print()
             console.print("  [bold green]이번 스케줄 처리 완료.[/bold green]")
