@@ -71,9 +71,10 @@ class CourseScraper:
             "--window-size=1280,720",
             "--password-store=basic",
             # 메모리 누수 방지: JS 힙 상한 · 메모리 압박 시 캐시 해제 · 렌더러 수 제한
-            "--js-flags=--max-old-space-size=1024",
+            "--js-flags=--max-old-space-size=512",
             "--aggressive-cache-discard",
             "--renderer-process-limit=2",
+            "--disable-gpu-memory-buffer-video-frames",
         ]
         # Chrome(H.264 포함) 우선 시도 — ARM64 등 미지원 환경에서는 Chromium으로 fallback
         try:
@@ -125,6 +126,21 @@ class CourseScraper:
                     ? Promise.resolve({ state: Notification.permission })
                     : originalQuery(parameters)
             );
+
+            // H.264 canPlayType 위장 (Chromium headless H.264 미지원 우회)
+            // background_player가 fake WebM을 제공할 수 있도록 플레이어가 MP4를 요청하게 함
+            if (window.MediaSource && MediaSource.isTypeSupported) {
+                var _origMSE = MediaSource.isTypeSupported.bind(MediaSource);
+                MediaSource.isTypeSupported = function(type) {
+                    if (type && (type.indexOf('avc') !== -1 || type.indexOf('mp4') !== -1)) return true;
+                    return _origMSE(type);
+                };
+            }
+            var _origCPT = HTMLVideoElement.prototype.canPlayType;
+            HTMLVideoElement.prototype.canPlayType = function(type) {
+                if (type && (type.indexOf('mp4') !== -1 || type.indexOf('avc') !== -1 || type.indexOf('h264') !== -1)) return 'probably';
+                return _origCPT.call(this, type);
+            };
         """)
         page = await context.new_page()
         self._context = context

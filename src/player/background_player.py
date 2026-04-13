@@ -920,27 +920,8 @@ async def play_lecture(
             )
 
         await page.route("**/*.mp4", _serve_fake)
-        # canPlayType / isTypeSupported 오버라이드:
-        # Chromium은 H.264 미지원 → canPlayType("video/mp4; codecs=avc1") = ""
-        # 플레이어가 이 값을 보고 MP4 요청 없이 바로 flashErrorPage로 분기.
-        # init script로 'probably'를 반환하게 속이면 MP4를 실제로 요청하고,
-        # 그 요청을 위 route가 VP8 WebM으로 대체한다.
-        await page.add_init_script("""
-            (function() {
-                if (window.MediaSource && MediaSource.isTypeSupported) {
-                    var _origMSE = MediaSource.isTypeSupported.bind(MediaSource);
-                    MediaSource.isTypeSupported = function(type) {
-                        if (type && (type.indexOf('avc') !== -1 || type.indexOf('mp4') !== -1)) return true;
-                        return _origMSE(type);
-                    };
-                }
-                var _origCPT = HTMLVideoElement.prototype.canPlayType;
-                HTMLVideoElement.prototype.canPlayType = function(type) {
-                    if (type && (type.indexOf('mp4') !== -1 || type.indexOf('avc') !== -1 || type.indexOf('h264') !== -1)) return 'probably';
-                    return _origCPT.call(this, type);
-                };
-            })();
-        """)
+        # canPlayType / isTypeSupported 오버라이드는 CourseScraper._setup_browser()의
+        # context.add_init_script()에서 한 번만 등록된다. 여기서 중복 등록하지 않는다.
         _using_fake_video = True
         log("[0] MP4 인터셉트 (*.mp4 전체) + canPlayType 오버라이드 등록 완료")
     except Exception as e:

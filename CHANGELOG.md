@@ -1,5 +1,22 @@
 # Changelog
 
+## [v26.04.02] - 2026-04-02
+
+### 수정
+- **V8 힙 상한 축소** (`src/scraper/course_scraper.py`)
+  - `--js-flags=--max-old-space-size=1024` → `512`: 렌더러 프로세스당 V8 힙 상한을 절반으로 줄여 최대 1 GB 절감
+- **GPU 비디오 프레임 메모리 버퍼 비활성화** (`src/scraper/course_scraper.py`)
+  - `--disable-gpu-memory-buffer-video-frames` 추가: GPU 메모리 버퍼를 통한 비디오 프레임 처리 비활성화
+- **`canPlayType` 오버라이드 누적 등록 문제 수정** (`src/scraper/course_scraper.py`, `src/player/background_player.py`)
+  - 기존: `play_lecture()` 호출마다 `page.add_init_script()`로 동일한 H.264 위장 스크립트가 페이지에 누적 등록 (강의 N개 = N회 등록, 이후 모든 페이지 이동 시 N번 재실행)
+  - 수정: `CourseScraper._setup_browser()`의 `context.add_init_script()`로 이동하여 브라우저 컨텍스트 생성 시 1회만 등록
+- **자동 모드 사이클 완료 후 브라우저 재시작** (`src/ui/auto.py`)
+  - 원인: Chromium의 PartitionAlloc 메모리 할당자가 강의 재생 중 확보한 메모리를 OS에 반환하지 않고 내부 풀로 보유 — `about:blank` 이동만으로는 해소되지 않아 사이클마다 점유량이 누적 증가
+  - 스케줄 사이클에서 강의 처리 완료 후 `scraper.close()` → `scraper.start()`로 Chromium 프로세스를 완전 교체하여 메모리 풀 초기화
+  - 재시작 실패 시 예외 처리 후 기존 브라우저로 다음 사이클 계속 진행
+
+---
+
 ## [v26.04.01] - 2026-04-11
 
 ### 수정

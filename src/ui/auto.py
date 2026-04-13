@@ -265,6 +265,18 @@ async def run_auto_mode(scraper, courses, details) -> None:
             console.print("  [bold green]이번 스케줄 처리 완료.[/bold green]")
             console.print()
 
+            # 사이클 완료 후 브라우저 재시작: Chromium PartitionAlloc 풀이
+            # 재생 중 확보한 메모리를 OS에 반환하지 않아 사이클마다 점유량이 증가하는 문제 해결.
+            if not stop_event.is_set():
+                console.print("  [dim]브라우저 재시작 중 (메모리 초기화)...[/dim]")
+                try:
+                    await scraper.close()
+                    await scraper.start()
+                    console.print("  [dim]브라우저 재시작 완료.[/dim]")
+                except Exception as _e:
+                    console.print(f"  [yellow]브라우저 재시작 실패: {_e} — 다음 사이클은 기존 브라우저 유지[/yellow]")
+                console.print()
+
     finally:
         listener_task.cancel()
         try:
