@@ -28,10 +28,22 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
 
 def _send_document(bot_token: str, chat_id: str, file_path: Path, caption: str = "") -> bool:
     """텔레그램 파일을 전송한다. 응답 body의 ok 필드로 성공 여부를 판정한다."""
+    import sys
+
     import requests
+
+    def _err(msg: str) -> None:
+        print(f"[Telegram][ERROR] {msg}", file=sys.stderr, flush=True)
 
     url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
     try:
+        if not file_path.exists():
+            _err(f"파일 없음: {file_path}")
+            return False
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        if file_size_mb > 50:
+            _err(f"파일 크기 초과 ({file_size_mb:.1f} MB > 50 MB): {file_path}")
+            return False
         with open(file_path, "rb") as f:
             resp = requests.post(
                 url,
@@ -41,9 +53,13 @@ def _send_document(bot_token: str, chat_id: str, file_path: Path, caption: str =
             )
         if resp.ok:
             data = resp.json()
+            if not data.get("ok", False):
+                _err(f"sendDocument API 오류: {data}")
             return data.get("ok", False)
+        _err(f"sendDocument HTTP {resp.status_code}: {resp.text[:200]}")
         return False
-    except Exception:
+    except Exception as e:
+        _err(f"sendDocument 예외: {e}")
         return False
 
 

@@ -273,8 +273,10 @@ class CourseScraper:
         # networkidle로 Canvas JS + iframe 로드까지 대기 (timeout 60초로 여유 확보)
         await page.goto(course.lectures_url, wait_until="networkidle", timeout=60000)
 
-        # 세션 만료 시 재로그인
-        if "login" in page.url:
+        # 세션 만료 시 재로그인 (/?  리다이렉트 포함)
+        from src.auth.login import _needs_login
+
+        if await _needs_login(page):
             async with self._login_lock:
                 if not self._session_restored:
                     self._log("세션 만료 감지 — 자동 재로그인 중...")

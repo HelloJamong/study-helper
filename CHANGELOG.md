@@ -1,5 +1,21 @@
 # Changelog
 
+## [v26.04.03] - 2026-04-22
+
+### 수정
+- **텔레그램 파일 전송 실패 시 무음 처리 문제 수정** (`src/notifier/telegram_notifier.py`)
+  - 기존: `_send_document()`의 `except Exception: return False`로 모든 오류가 무음 처리되어 파일 미전송 원인 파악 불가
+  - 수정: 파일 없음 / 크기 초과(50 MB) / HTTP 오류 / 예외 각각에 대해 `stderr` 출력 추가
+- **LMS 로그인 실패 문제 수정 — `/?` 리다이렉트 미감지** (`src/auth/login.py`, `src/player/background_player.py`, `src/scraper/course_scraper.py`)
+  - 원인: Canvas가 미인증 상태에서 `login` 문자열 없는 URL(`/?`)로 리다이렉트할 경우 기존 `"login" in page.url` 체크로는 감지 불가 → 로그인 성공으로 오판
+  - `_needs_login()` 추가: URL 체크와 `.login_btn` 버튼 존재 여부를 함께 확인하여 `/?` 리다이렉트 케이스 포함 감지
+  - `expect_navigation` 방식 → 10초 폴링 방식(`_wait_for_login_result()`)으로 교체하여 네트워크 상태 무관하게 안정적 판정
+  - 다이얼로그(alert) 자동 accept 및 실패 감지 추가
+  - 로그인 오류 문구 텍스트 감지 추가 (`_has_login_error_text()`)
+  - `background_player.py`, `course_scraper.py`의 세션 만료 감지 로직도 `_needs_login()` 사용으로 통일
+
+---
+
 ## [v26.04.02] - 2026-04-02
 
 ### 수정

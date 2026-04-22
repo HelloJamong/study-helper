@@ -1121,11 +1121,12 @@ async def _play_lecture_inner(
     await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
     log(f"    → 현재 URL: {page.url}")
 
-    # 세션 만료 감지 → 재로그인 후 재이동
-    if "login" in page.url:
+    # 세션 만료 감지 → 재로그인 후 재이동 (/?  리다이렉트 포함)
+    from src.auth.login import _needs_login, ensure_logged_in
+    from src.config import Config
+
+    if await _needs_login(page):
         log("[1] 세션 만료 감지 — 재로그인 중...")
-        from src.auth.login import ensure_logged_in
-        from src.config import Config
 
         username = Config.LMS_USER_ID
         password = Config.LMS_PASSWORD
