@@ -211,7 +211,10 @@ def _parse_player_url(player_url: str) -> dict:
     parsed = urlparse(player_url)
     qs = parse_qs(parsed.query)
 
-    raw_endat = float(qs.get("endat", ["0"])[0])
+    try:
+        raw_endat = float(qs.get("endat", ["0"])[0])
+    except (ValueError, TypeError):
+        raw_endat = 0.0
     # LMS가 duration 미확정 강의에 sentinel 값(-8888 등 음수)을 사용하는 경우 0으로 정규화
     duration = max(raw_endat, 0.0)
     target_url = unquote(qs.get("TargetUrl", [""])[0])
@@ -385,6 +388,21 @@ async def _fetch_learningx_duration(page: Page, learningx_url: str, log: Callabl
 
     item_id = m.group(1)
     course_id = cm.group(1)
+
+    # tool_content frame DOM의 data-item_id가 URL의 item_id와 다를 수 있음
+    # (URL: LTI view ID, data-item_id: 실제 attendance item ID)
+    tool_frame = page.frame(name="tool_content")
+    if tool_frame:
+        try:
+            dom_id = await tool_frame.evaluate(
+                "() => document.querySelector('#root')?.getAttribute('data-item_id') || ''"
+            )
+            if dom_id and dom_id != item_id:
+                log(f"  [LX] duration 조회 item_id 교정: URL({item_id}) → DOM data-item_id({dom_id})")
+                item_id = dom_id
+        except Exception:
+            pass
+
     api_url = f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{course_id}/attendance_items/{item_id}"
 
     try:
@@ -437,6 +455,21 @@ async def _play_via_learningx_api(
         return state
 
     course_id = cm.group(1)
+
+    # tool_content frame DOM의 data-item_id 우선 사용
+    # URL의 item_id(LTI view ID)와 실제 attendance_item_id가 다른 경우가 있음
+    tool_frame = page.frame(name="tool_content")
+    if tool_frame:
+        try:
+            dom_id = await tool_frame.evaluate(
+                "() => document.querySelector('#root')?.getAttribute('data-item_id') || ''"
+            )
+            if dom_id and dom_id != item_id:
+                log(f"  [LX] item_id 교정: URL({item_id}) → DOM data-item_id({dom_id})")
+                item_id = dom_id
+        except Exception:
+            pass
+
     api_url = f"https://canvas.ssu.ac.kr/learningx/api/v1/courses/{course_id}/attendance_items/{item_id}"
     log(f"  [LX] learningx item API 호출: {api_url}")
 
@@ -472,6 +505,23 @@ async def _play_via_learningx_api(
             log(f"  [LX] API 호출 실패(request): {e}")
             state.error = f"learningx API 호출 실패: {e}"
             return state
+
+    if status == 403:
+        try:
+            err_msg = json.loads(body).get("message", "forbidden")
+        except Exception:
+            err_msg = body[:100] if body else "forbidden"
+        log(f"  [LX] 403 Forbidden — 출석 기간 미개방 또는 접근 제한 (message={err_msg!r})")
+        state.error = "출석 기간이 열려 있지 않거나 이 강의에 대한 접근 권한이 없습니다."
+        return state
+
+    if status == 401:
+        state.error = "세션이 만료됐습니다. 재실행하면 자동으로 재로그인됩니다."
+        return state
+
+    if status == 404:
+        state.error = "강의를 찾을 수 없습니다. 강의 목록을 다시 불러와 주세요."
+        return state
 
     if status != 200:
         state.error = f"learningx API 오류: {status}"
@@ -576,13 +626,18 @@ async def _play_via_progress_api(
                     _resp = await page.request.get(_items_url)
                     _body = await _resp.text()
                     log(f"  [API] attendance_items 응답: status={_resp.status} body={_body[:200]!r}")
-                    _data = json.loads(_body)
-                    _api_duration = float((_data.get("item_content_data") or {}).get("duration") or 0)
-                    if _api_duration > 0:
-                        log(f"  [API] attendance_items duration={_api_duration:.1f}s — 사용")
-                        duration = _api_duration
+                    if _resp.status == 403:
+                        log("  [API] attendance_items 403 — 출석 기간 미개방 또는 접근 제한")
+                    elif _resp.status != 200:
+                        log(f"  [API] attendance_items 비정상 응답: {_resp.status}")
                     else:
-                        log("  [API] attendance_items duration 값이 0 또는 없음")
+                        _data = json.loads(_body)
+                        _api_duration = float((_data.get("item_content_data") or {}).get("duration") or 0)
+                        if _api_duration > 0:
+                            log(f"  [API] attendance_items duration={_api_duration:.1f}s — 사용")
+                            duration = _api_duration
+                        else:
+                            log("  [API] attendance_items duration 값이 0 또는 없음")
                 except Exception as _e:
                     log(f"  [API] attendance_items 조회 실패: {_e}")
 
@@ -687,6 +742,7 @@ async def _play_via_progress_api(
     current = 0.0
     report_interval = 30.0  # 30초마다 진도 보고
     next_report = report_interval
+    _consecutive_fail = 0  # 연속 진도 보고 실패 카운터 (세션 만료 감지용)
 
     # 총 페이지 수는 실제 요청에서 totalpage=15로 고정 (LMS 플레이어 기본값)
     total_page = 15
@@ -744,6 +800,8 @@ async def _play_via_progress_api(
                     log(f"  [API] 응답 (page ctx): {eval_status}  body={eval_body[:200]!r}")
                     if eval_status == 200 and '"result":true' in eval_body:
                         reported = True
+                    elif eval_status == 401:
+                        log("  [API] 401 — 세션 만료 가능성. 이후 진도 보고가 무효화될 수 있습니다.")
                 except Exception as pe:
                     log(f"  [API] page ctx fetch 실패 ({pe}) — JSONP/fallback으로 폴백")
 
@@ -752,7 +810,11 @@ async def _play_via_progress_api(
                     try:
                         body = await _call_progress_jsonp(commons_frame, report_target, callback)
                         log(f"  [API] 응답 (JSONP): {body[:200]!r}")
-                        reported = True
+                        if '"result":true' in body:
+                            reported = True
+                        elif '"error"' in body or '"result":false' in body:
+                            log("  [API] JSONP 결과 실패 — page.request.get으로 폴백")
+                            commons_frame = None
                     except Exception as je:
                         log(f"  [API] JSONP 실패 ({je}) — page.request.get으로 폴백")
                         commons_frame = None
@@ -765,6 +827,22 @@ async def _play_via_progress_api(
                     )
                     body = await response.text()
                     log(f"  [API] 응답 (fallback): {response.status}  body={body[:200]!r}")
+                    if response.status == 401:
+                        log("  [API] fallback 401 — 세션 만료. 출석이 인정되지 않을 수 있습니다.")
+                        _consecutive_fail += 1
+                    elif response.status == 200 and '"result":true' in body:
+                        _consecutive_fail = 0
+                    else:
+                        _consecutive_fail += 1
+
+                    if _consecutive_fail >= 5:
+                        log(
+                            f"  [API] 진도 보고 {_consecutive_fail}회 연속 실패 — 세션 만료 또는 서버 오류로 중단합니다."
+                        )
+                        state.error = "진도 보고 연속 실패 — 세션이 만료됐을 수 있습니다. 다시 시도해주세요."
+                        return state
+                elif reported:
+                    _consecutive_fail = 0
 
                 next_report = current + report_interval
             except Exception as e:
@@ -1430,8 +1508,20 @@ async def _play_lecture_inner(
     while True:
         info = await _get_video_state(frame)
         if info is None:
-            # frame이 언로드된 경우
             log("[7] video state가 None — frame 언로드됨")
+            # 재생 중 frame이 언로드된 경우 Plan B로 전환
+            if state.duration > 0 and state.current < state.duration - _END_THRESHOLD:
+                log(f"[7] 재생 미완료 상태로 언로드 ({state.current:.0f}s / {state.duration:.0f}s) — Plan B 전환")
+                if _sniffed_duration:
+                    fallback_duration = _sniffed_duration[0]
+                return await _play_via_progress_api(
+                    page,
+                    player_url_snapshot,
+                    on_progress,
+                    log,
+                    fallback_duration,
+                    existing_commons_frame=player_frame,
+                )
             break
 
         state.current = info["current"]

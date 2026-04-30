@@ -1,5 +1,34 @@
 # Changelog
 
+## [v26.04.04] - 2026-04-30
+
+### 수정
+- **learningx item_id 불일치 수정** (`src/player/background_player.py`)
+  - 원인: `_play_via_learningx_api()`와 `_fetch_learningx_duration()`이 LTI view URL 경로의 item_id를 사용했으나, 실제 attendance item_id는 DOM의 `#root[data-item_id]` 속성에 별도로 존재 (예: URL `835118` vs DOM `839643`)
+  - 수정: `tool_content` frame DOM에서 `data-item_id`를 우선 읽어 item_id를 교정하도록 변경 — 두 값이 다를 경우 로그에 교정 내역 출력
+- **403 응답 시 명확한 오류 메시지 표시** (`src/player/background_player.py`)
+  - 기존: `"learningx API 오류: 403"` 으로 표시
+  - 수정: `"출석 기간이 열려 있지 않거나 이 강의에 대한 접근 권한이 없습니다."` 로 표시 — 서버 응답의 `message` 필드도 로그에 기록
+- **401/404 응답 시 명확한 오류 메시지 추가** (`src/player/background_player.py`)
+  - 401: `"세션이 만료됐습니다. 재실행하면 자동으로 재로그인됩니다."`
+  - 404: `"강의를 찾을 수 없습니다. 강의 목록을 다시 불러와 주세요."`
+- **진도 보고 JSONP 결과 미검증 수정** (`src/player/background_player.py`)
+  - 기존: JSONP 응답 수신 시 `result:false` / `error` 여부와 무관하게 `reported = True`로 설정 → 진도 보고 실패를 성공으로 처리
+  - 수정: `"result":true"` 포함 여부 검사 후 설정 — 실패 응답 시 `page.request.get` 폴백으로 진행
+- **진도 보고 연속 실패 시 세션 만료 감지** (`src/player/background_player.py`)
+  - 연속 실패 카운터(`_consecutive_fail`) 추가 — 5회 연속 실패 시 `"진도 보고 연속 실패 — 세션이 만료됐을 수 있습니다"` 오류로 조기 종료
+  - 장시간 강의(1~2시간) 재생 중 세션 만료로 이후 모든 진도 보고가 무효화되는 상황 방지
+- **Plan A frame 언로드 시 Plan B 자동 전환** (`src/player/background_player.py`)
+  - 기존: 재생 중 video frame이 언로드되면 미완료 상태에서 루프 종료
+  - 수정: 재생 미완료(현재 위치 < 종료 기준) 상태에서 언로드 시 `_play_via_progress_api()`(Plan B)로 자동 전환
+- **attendance_items API 비정상 응답 처리 강화** (`src/player/background_player.py`)
+  - 기존: 403/404 등 비정상 응답에서 `json.loads()` 실패 예외가 실제 HTTP 상태코드 원인을 가림
+  - 수정: 200 이외 응답에서 JSON 파싱 건너뛰고 상태코드를 직접 로깅 — 403은 출석 기간 미개방으로 명시
+- **`_parse_player_url` endat 파싱 오류 방어** (`src/player/background_player.py`)
+  - `endat=abc` 등 비정상 값에서 `ValueError`가 호출 스택으로 전파되던 문제 수정 — `try-except`로 감싸 파싱 실패 시 `0.0` 폴백
+
+---
+
 ## [v26.04.03] - 2026-04-22
 
 ### 수정
