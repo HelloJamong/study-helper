@@ -1,5 +1,21 @@
 # Changelog
 
+## [v26.05.01] - 2026-05-20
+
+### 수정
+- **learningx API 401 세션 만료 시 자동 재로그인 후 재시도** (`src/player/background_player.py`)
+  - 원인: 자동 모드에서 장시간 재생 후 learningx API 토큰이 만료되면 다음 강의의 `attendance_items` 호출이 401을 반환해 재생 실패 — 기존 코드는 즉시 오류 반환만 처리
+  - `_play_via_learningx_api()`에 `lecture_url`, `is_retry` 파라미터 추가
+  - 401 수신 시 `ensure_logged_in()`으로 재인증 후 `lecture_url`로 재이동해 LTI 세션을 새로 획득하고 1회 자동 재시도
+  - `is_retry` 가드로 무한 재귀 방지 / `lecture_url` 미전달 시 기존 오류 반환으로 하위 호환 유지
+  - 참고: learningx API 세션은 Canvas 세션과 독립적으로 만료될 수 있어 기존 `_needs_login()` 체크만으로는 감지 불가
+- **vendors.js 502 발생 시 페이지 새로고침 후 재시도** (`src/player/background_player.py`)
+  - 원인: learningx 플레이어 초기화에 필수인 `vendors.js`가 502를 반환하면 commons frame이 생성되지 않아 Plan A 사용 불가 → Plan B(learningx API)로 강제 진입 — 위의 401 문제와 결합 시 재생 완전 실패
+  - `page.on("response")` 스니퍼로 `vendors.js 502`를 감지, commons frame 탐색 실패 시 페이지를 1회 새로고침해 정상 로드 유도
+  - 재시도 후에도 frame이 없으면 기존 Plan B 경로로 진행하여 하위 호환 유지
+
+---
+
 ## [v26.04.04] - 2026-04-30
 
 ### 수정
