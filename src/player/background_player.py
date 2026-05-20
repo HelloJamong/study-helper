@@ -1073,6 +1073,18 @@ async def play_lecture(
 
     page.on("response", _sniff_attendance_duration)
 
+    # vendors.js 502 감지: learningx 필수 JS 로딩 실패 시 commons frame이 생성되지 않아
+    # Plan B로 강제 진입하는 문제를 예방하기 위한 재시도 신호.
+    _vendors_502: list[bool] = []
+
+    async def _sniff_vendors_502(response):
+        if "vendors.js" in response.url and response.status == 502:
+            if not _vendors_502:
+                _vendors_502.append(True)
+                log(f"  [SNIFF] vendors.js 502 감지: {response.url}")
+
+    page.on("response", _sniff_vendors_502)
+
     # commons /em/ URL의 endat가 이전 진도로 고정된 경우 실제 duration으로 교정
     # attendance_items sniff로 duration을 먼저 얻고, 그 값으로 endat를 교체한다.
     async def _fix_commons_endat(route, request):
@@ -1175,6 +1187,10 @@ async def play_lecture(
             page.remove_listener("response", _sniff_attendance_duration)
         except Exception:
             pass
+        try:
+            page.remove_listener("response", _sniff_vendors_502)
+        except Exception:
+            pass
         if _on_request:
             try:
                 page.remove_listener("request", _on_request)
@@ -1213,6 +1229,7 @@ async def play_lecture(
             _sniffed_duration,
             _fake_video_cache,
             _shared_duration,
+            _vendors_502,
         )
     except asyncio.CancelledError:
         state.error = "사용자 중단"
@@ -1233,6 +1250,7 @@ async def _play_lecture_inner(
     _sniffed_duration: list[float] | None = None,
     _fake_video_cache: list[bytes] | None = None,
     _shared_duration: list[float] | None = None,
+    _vendors_502: list[bool] | None = None,
 ) -> PlaybackState:
     """play_lecture()의 실제 재생 로직. try-finally로 _cleanup() 보장을 위해 분리."""
     await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
@@ -1258,6 +1276,19 @@ async def _play_lecture_inner(
     # 2. 초기 플레이어 선택 화면 frame 탐색 (재생 버튼이 있는 곳)
     log("[2] 플레이어 선택 화면 frame 탐색 중...")
     player_frame = await _find_player_frame(page)
+    if not player_frame and _vendors_502:
+        log("[2] vendors.js 502 감지 — 페이지 새로고침 후 재시도")
+        _vendors_502.clear()
+        try:
+            await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+        except Exception as e:
+            log(f"[2] vendors.js 502 재시도 실패: {e}")
+        player_frame = await _find_player_frame(page)
+
     if not player_frame:
         log("    → 실패: tool_content 또는 commons.ssu.ac.kr frame 없음")
         log("    → 현재 프레임 목록:")
