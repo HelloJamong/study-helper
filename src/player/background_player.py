@@ -518,8 +518,45 @@ async def _play_via_learningx_api(
         return state
 
     if status == 401:
-        state.error = "세션이 만료됐습니다. 재실행하면 자동으로 재로그인됩니다."
-        return state
+        if is_retry or not lecture_url:
+            state.error = "세션이 만료됐습니다. 재실행하면 자동으로 재로그인됩니다."
+            return state
+
+        log("  [LX] 401 감지 — 재로그인 후 1회 재시도")
+        from src.auth.login import ensure_logged_in
+        from src.config import Config
+
+        ok = await ensure_logged_in(page, Config.LMS_USER_ID, Config.LMS_PASSWORD)
+        if not ok:
+            log("  [LX] 재로그인 실패")
+            state.error = "세션 만료 후 재로그인 실패. 다시 실행해 주세요."
+            return state
+
+        log(f"  [LX] 재로그인 완료 — 강의 페이지 재이동: {lecture_url}")
+        try:
+            await page.goto(lecture_url, wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_load_state("networkidle", timeout=30000)
+        except Exception as e:
+            log(f"  [LX] 재이동 실패: {e}")
+            state.error = f"재로그인 후 강의 페이지 재이동 실패: {e}"
+            return state
+
+        tool_frame = page.frame(name="tool_content")
+        if not tool_frame or "learningx" not in tool_frame.url:
+            log("  [LX] 재이동 후 learningx frame 없음")
+            state.error = "재로그인 후 강의 페이지를 불러오지 못했습니다."
+            return state
+
+        log(f"  [LX] 재시도: {tool_frame.url}")
+        return await _play_via_learningx_api(
+            page,
+            tool_frame.url,
+            on_progress,
+            log,
+            fallback_duration,
+            lecture_url=lecture_url,
+            is_retry=True,
+        )
 
     if status == 404:
         state.error = "강의를 찾을 수 없습니다. 강의 목록을 다시 불러와 주세요."
