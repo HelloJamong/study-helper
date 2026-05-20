@@ -421,6 +421,8 @@ async def _play_via_learningx_api(
     on_progress: Callable[[PlaybackState], None] | None,
     log: Callable,
     fallback_duration: float = 0.0,
+    lecture_url: str = "",
+    is_retry: bool = False,
 ) -> PlaybackState:
     """
     learningx 플레이어 전용 Plan B.
@@ -1248,7 +1250,9 @@ async def _play_lecture_inner(
                 log("    → networkidle 후 commons frame 발견 — Plan A 계속")
             else:
                 log("    → networkidle 후에도 commons frame 없음 — learningx API Plan B")
-                return await _play_via_learningx_api(page, tool_frame.url, on_progress, log, fallback_duration)
+                return await _play_via_learningx_api(
+                    page, tool_frame.url, on_progress, log, fallback_duration, lecture_url=lecture_url
+                )
         else:
             state.error = "비디오 프레임을 찾지 못했습니다."
             return state
