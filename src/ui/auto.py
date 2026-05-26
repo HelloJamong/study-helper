@@ -154,10 +154,14 @@ async def run_auto_mode(scraper, courses, details) -> None:
         """별도 태스크로 사용자 입력을 감시한다. '0' + Enter로 종료."""
         loop = asyncio.get_event_loop()
         while not stop_event.is_set():
+            # 재생 중에는 stdin을 점유하지 않는다.
+            # readline 이전에 체크해야 player의 _stop_listener와 stdin 경쟁이 없다.
+            if playing_event.is_set():
+                await asyncio.sleep(0.2)
+                continue
             try:
                 line = await loop.run_in_executor(None, sys.stdin.readline)
-                # 재생 중에 읽힌 입력은 player의 _stop_listener가 처리하므로 버린다
-                if playing_event.is_set():
+                if playing_event.is_set():  # readline 대기 중 재생이 시작된 경우 방어
                     continue
                 if line.strip() == "0":
                     stop_event.set()
@@ -247,9 +251,18 @@ async def run_auto_mode(scraper, courses, details) -> None:
             console.print(f"  미시청 강의 [bold]{len(pending_list)}개[/bold] 발견. 순차 처리 시작합니다.")
             console.print()
 
-            for course, lec in pending_list:
+            for idx, (course, lec) in enumerate(pending_list):
                 if stop_event.is_set():
                     break
+                # 5강의마다 중간 브라우저 재시작 — 사이클 내 Chromium 힙 누적 억제
+                if idx > 0 and idx % 5 == 0:
+                    console.print("  [dim]메모리 초기화: 브라우저 재시작 중...[/dim]")
+                    try:
+                        await scraper.close()
+                        await scraper.start()
+                        console.print("  [dim]브라우저 재시작 완료.[/dim]")
+                    except Exception as _e:
+                        console.print(f"  [yellow]브라우저 재시작 실패: {_e} — 기존 브라우저 유지[/yellow]")
                 playing_event.set()
                 try:
                     await _process_lecture(scraper, course, lec, stop_event)

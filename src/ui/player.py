@@ -103,11 +103,24 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
 
     result: dict = {"state": None}
 
-    # 오류 발생 시에만 파일에 기록할 로그 버퍼
-    log_buffer: list[str] = []
+    # 재생 로그를 파일에 직접 스트리밍 — 오류 시에만 유지, 정상 완료 시 삭제
+    _play_logger, _log_path = get_error_logger("play")
+    _play_logger.info(f"강의: {lec.title}")
+    _play_logger.info(f"URL: {lec.full_url}")
+    _play_logger.info("--- 재생 로그 ---")
 
     def _log(msg: str):
-        log_buffer.append(msg)
+        _play_logger.info(msg)
+
+    def _close_play_logger(keep: bool) -> None:
+        for h in list(_play_logger.handlers):
+            h.close()
+            _play_logger.removeHandler(h)
+        if not keep:
+            try:
+                _log_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def on_progress(state: PlaybackState):
         """플레이어 콜백 → Progress bar 업데이트."""
@@ -179,42 +192,22 @@ async def run_player(page, lec: LectureItem, debug: bool = False) -> tuple[bool,
     if final_state.error:
         if final_state.error == "사용자 중단":
             console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
+            _close_play_logger(keep=False)
             return False, False, True
         console.print(f"  [bold red]재생 오류:[/bold red] {final_state.error}")
-        # 오류 발생 시에만 로그 파일 생성
-        logger, log_path = get_error_logger("play")
-        logger.info(f"강의: {lec.title}")
-        logger.info(f"URL: {lec.full_url}")
-        logger.info(f"오류: {final_state.error}")
-        logger.info("--- 재생 로그 ---")
-        for line in log_buffer:
-            logger.info(line)
-        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+        _play_logger.info(f"오류: {final_state.error}")
+        _close_play_logger(keep=True)
+        console.print(f"  [dim]로그 저장: {_log_path}[/dim]")
         _tg_playback_error(lec, failed=True)
         return False, True, False
 
     if final_state.ended:
         console.print("  [bold green]재생 완료![/bold green]")
-        # 진단용: 항상 로그 저장 (duration 교정 확인)
-        logger, log_path = get_error_logger("play")
-        logger.info(f"강의: {lec.title}")
-        logger.info(f"URL: {lec.full_url}")
-        logger.info(f"상태: 재생 완료 (duration={final_state.duration:.1f}s)")
-        logger.info("--- 재생 로그 ---")
-        for line in log_buffer:
-            logger.info(line)
-        console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+        _close_play_logger(keep=False)
         return True, False, False
 
-    # 재생 미완료(중단)도 로그 저장
-    logger, log_path = get_error_logger("play")
-    logger.info(f"강의: {lec.title}")
-    logger.info(f"URL: {lec.full_url}")
-    logger.info(f"상태: 재생 미완료 (current={final_state.current:.1f}s / duration={final_state.duration:.1f}s)")
-    logger.info("--- 재생 로그 ---")
-    for line in log_buffer:
-        logger.info(line)
+    # 재생 미완료(중단)
     console.print("  [yellow]재생이 중단되었습니다.[/yellow]")
-    console.print(f"  [dim]로그 저장: {log_path}[/dim]")
+    _close_play_logger(keep=False)
     _tg_playback_error(lec, failed=False)
     return False, False, False

@@ -1,10 +1,8 @@
 """deadline_checker.py 단위 테스트."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from src.notifier.deadline_checker import find_approaching_deadlines, _parse_lms_date
+from src.notifier.deadline_checker import _parse_lms_date, find_approaching_deadlines
 from src.scraper.models import Course, CourseDetail, LectureItem, LectureType, Week
 
 KST = timezone(timedelta(hours=9))

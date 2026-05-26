@@ -1,5 +1,27 @@
 # Changelog
 
+## [v26.05.03] - 2026-05-26
+
+### 수정
+- **자동 모드 종료 후 버전 업데이트 알림 미출력 수정** (`src/main.py`)
+  - 원인: 버전 체크가 컨테이너 시작 시 1회만 실행되어, 자동 모드 실행 중 새 버전이 배포된 경우 메인 화면 복귀 시 알림이 표시되지 않음
+  - `run_auto_mode()` 반환 직후 `_check_update_compat()`를 재호출해 `latest_version`을 갱신하도록 수정
+
+- **자동 모드 종료 시 "0" 이중 입력 필요 문제 수정** (`src/ui/auto.py`)
+  - 원인: 재생 중 `_input_listener`와 `player.py`의 `_stop_listener`가 동시에 `sys.stdin.readline`을 호출하는 경쟁 조건 발생 — "0" 입력이 어느 쪽에 소비돼도 처리되지 않고 버려짐
+  - `_input_listener`에서 `playing_event.is_set()` 체크를 `readline` 호출 **이전**에 수행하도록 변경 — 재생 중에는 sleep으로 대기해 stdin을 점유하지 않음
+
+- **장기 구동 시 메모리 누수 완화** (`src/ui/player.py`, `src/player/background_player.py`, `src/ui/auto.py`)
+  - `log_buffer` 메모리 누적 제거: 재생 로그를 `list[str]`에 적재하는 방식에서 `get_error_logger()`로 파일에 직접 스트리밍 기록으로 전환 — 오류 시에만 logs/ 파일 유지, 정상 완료·중단 시 자동 삭제
+  - `_fake_video_cache` 참조 해제 보장: `_cleanup()`에서 `_fake_video_cache.clear()` 명시적 호출 추가
+  - 사이클 내 Chromium 힙 누적 억제: 강의 5개 처리마다 브라우저 중간 재시작 추가 (기존: 사이클 완료 후 1회 재시작만 수행)
+
+### 수정 (이전 릴리즈 v26.05.02 포함)
+- **마감 알림 테스트 파일 import 정렬 오류 수정** (`tests/test_deadline_checker.py`)
+  - ruff `I001` / `F401`: import 블록 순서 미정렬 및 미사용 `pytest` import 제거
+
+---
+
 ## [v26.05.02] - 2026-05-26
 
 ### 수정

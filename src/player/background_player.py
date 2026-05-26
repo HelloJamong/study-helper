@@ -1206,6 +1206,7 @@ async def play_lecture(
                 await page.unroute("**/*.mp4")
             except Exception:
                 pass
+            _fake_video_cache.clear()
         try:
             await page.unroute("**/commons.ssu.ac.kr/em/**")
         except Exception:

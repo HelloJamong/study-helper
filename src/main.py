@@ -104,6 +104,7 @@ async def run():
             from src.ui.auto import run_auto_mode
 
             await run_auto_mode(scraper, courses, details)
+            latest_version = await _check_update_compat()
             continue
 
         selected, idx = result_course
