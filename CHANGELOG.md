@@ -1,5 +1,19 @@
 # Changelog
 
+## [v26.05.02] - 2026-05-26
+
+### 수정
+- **PDF 파일 열람 항목 마감 임박 알림 오발송 수정** (`src/notifier/deadline_checker.py`)
+  - 원인: `find_approaching_deadlines()`가 `VIDEO_LECTURE_TYPES`(영상)만 제외하고 `LectureType.FILE`(PDF 파일 열람)은 제외하지 않아, UX방법론·컴퓨터그래픽스 과목의 강의 자료 파일 항목이 마감 임박 알림 대상에 포함
+  - 파일 열람 항목은 `attendance = "none"`, `completion = "incomplete"` 상태이지만 출석 추적 엘리먼트 자체가 없어 영상 미시청 항목과 구분 불가 — LMS API `enabled_component_types`에도 `"file"`이 미포함(출석 추적 없음)
+  - `_NON_DEADLINE_TYPES = {LectureType.FILE}` 집합을 도입해 영상 타입과 동일한 방식으로 skip 처리
+  - `_TYPE_LABELS`에서 `LectureType.FILE` 항목 제거
+- **마감 알림 단위 테스트 추가** (`tests/test_deadline_checker.py`)
+  - 신규 파일: `find_approaching_deadlines`, `_parse_lms_date` 핵심 케이스 15개 커버
+  - FILE 제외, QUIZ/ASSIGNMENT/DISCUSSION 포함, 완료·출석·중복·마감일 없음·과거 마감 제외 케이스 포함
+
+---
+
 ## [v26.05.01] - 2026-05-20
 
 ### 수정
