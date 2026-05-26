@@ -25,10 +25,12 @@ _TYPE_LABELS = {
     LectureType.ASSIGNMENT: "과제",
     LectureType.DISCUSSION: "토론",
     LectureType.WIKI_PAGE: "위키",
-    LectureType.FILE: "파일",
     LectureType.ZOOM: "Zoom",
     LectureType.OTHER: "기타",
 }
+
+# 파일 열람 항목은 LMS enabled_component_types에 미포함 — 출석 추적 없음, 알림 제외
+_NON_DEADLINE_TYPES = {LectureType.FILE}
 
 
 @dataclass
@@ -137,6 +139,8 @@ def find_approaching_deadlines(
         for week in detail.weeks:
             for lec in week.lectures:
                 if lec.lecture_type in VIDEO_LECTURE_TYPES:
+                    continue
+                if lec.lecture_type in _NON_DEADLINE_TYPES:
                     continue
                 # 완료 판별: completion 또는 attendance 둘 중 하나라도 완료면 건너뜀
                 if lec.completion == "completed":
