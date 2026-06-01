@@ -1,5 +1,15 @@
 # Changelog
 
+## [v26.06.01] - 2026-06-01
+
+### 수정
+- **`OTHER` 타입 항목 마감 임박 알림 오발송 수정** (`src/notifier/deadline_checker.py`)
+  - 원인: PDF 강의 자료가 `LectureType.FILE`이 아닌 `LectureType.OTHER`로 스크래핑되는 경우, 기존 `_NON_DEADLINE_TYPES = {LectureType.FILE}` 필터를 통과해 마감 임박 알림이 발송됨
+  - 스크래퍼의 `_TYPE_CLASS_MAP`에 미등록된 아이콘 CSS 클래스를 가진 파일 항목은 기본값인 `OTHER`로 분류 — `FILE` 필터만으로는 차단 불가
+  - `_NON_DEADLINE_TYPES`에 `LectureType.OTHER` 추가, 출석 추적이 없는 모든 미분류 항목을 알림 대상에서 제외
+
+---
+
 ## [v26.05.03] - 2026-05-26
 
 ### 수정

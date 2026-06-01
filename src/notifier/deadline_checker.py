@@ -29,8 +29,8 @@ _TYPE_LABELS = {
     LectureType.OTHER: "기타",
 }
 
-# 파일 열람 항목은 LMS enabled_component_types에 미포함 — 출석 추적 없음, 알림 제외
-_NON_DEADLINE_TYPES = {LectureType.FILE}
+# FILE/OTHER 타입은 출석 추적 없음 — PDF 등 강의 자료는 OTHER로 분류되기도 함
+_NON_DEADLINE_TYPES = {LectureType.FILE, LectureType.OTHER}
 
 
 @dataclass
