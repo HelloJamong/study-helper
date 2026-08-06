@@ -232,7 +232,9 @@ def run_settings() -> None:
             else:  # openrouter — 모델이 수백 개라 목록 대신 직접 입력받는다
                 _print_section("3.3. OpenRouter 모델 입력")
                 console.print("  [dim]openrouter.ai/models 에서 모델 ID를 확인할 수 있습니다.[/dim]")
-                console.print(f"  [dim]예: {OPENROUTER_DEFAULT_MODEL} (유료), meta-llama/llama-3.1-8b-instruct:free[/dim]")
+                console.print(
+                    f"  [dim]예: {OPENROUTER_DEFAULT_MODEL} (유료), meta-llama/llama-3.1-8b-instruct:free[/dim]"
+                )
                 _default_model = _current_model or OPENROUTER_DEFAULT_MODEL
                 console.print(f"  [dim]현재값: {_default_model}[/dim]")
                 console.print()
