@@ -352,6 +352,6 @@ def make_filepath(course_name: str, week_label: str, lecture_title: str) -> Path
 
     # week_label에서 "N주차" 추출 (예: "1주차(총 8주 중)" → "1주차")
     week_match = re.match(r"(\d+주차)", week_label or "")
-    week_dir = week_match.group(1) if week_match else _sanitize_filename(week_label or "") or "기타"
+    week_dir = week_match.group(1) if week_match else (_sanitize_filename(week_label) if week_label else "기타")
 
     return Path(course) / week_dir / f"{title}.mp4"

@@ -9,7 +9,7 @@
 
 from pathlib import Path
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 
 _PREFIX = "enc:"
 _KEY_PATH = Path(__file__).parent.parent / ".secret_key"
@@ -34,16 +34,12 @@ def _load_or_create_key() -> bytes:
     Docker 볼륨 마운트 시 .secret_key가 디렉토리로 생성될 수 있으므로
     디렉토리인 경우 내부의 key 파일을 사용한다.
     """
-    key_file = _KEY_PATH / "key" if _KEY_PATH.is_dir() else _KEY_PATH
+    key_file = _resolve_key_path()
 
     if key_file.exists() and key_file.is_file():
         return key_file.read_bytes().strip()
 
     key = Fernet.generate_key()
-    if _KEY_PATH.is_dir():
-        key_file = _KEY_PATH / "key"
-    else:
-        key_file = _KEY_PATH
     key_file.write_bytes(key)
     try:
         key_file.chmod(0o600)
@@ -73,7 +69,7 @@ def decrypt(value: str) -> str:
     token = value[len(_PREFIX) :]
     try:
         return _fernet().decrypt(token.encode()).decode()
-    except (InvalidToken, Exception):
+    except Exception:
         return ""
 
 

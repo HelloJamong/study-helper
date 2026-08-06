@@ -55,6 +55,11 @@ class CourseScraper:
         self._login_lock = asyncio.Lock()
         self._session_restored = False  # 병렬 재로그인 중복 방지 플래그
 
+    @property
+    def page(self) -> Page:
+        """현재 로그인 세션의 Playwright Page."""
+        return self._page
+
     async def _setup_browser(self):
         _args = [
             "--disable-blink-features=AutomationControlled",

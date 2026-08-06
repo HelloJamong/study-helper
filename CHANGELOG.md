@@ -1,5 +1,25 @@
 # Changelog
 
+## [v26.7.0] - 2026-08-06
+
+### 변경
+- **`CourseScraper` 페이지 접근 캡슐화** (`src/scraper/course_scraper.py`, `src/main.py`, `src/ui/auto.py`)
+  - `main.py`·`ui/auto.py`에서 프라이빗 속성 `scraper._page`를 5곳에서 직접 참조하던 것을 `page` 프로퍼티 추가로 정리
+- **`crypto.py` 키 경로 판별 로직 중복 제거** (`src/crypto.py`)
+  - `_load_or_create_key()`가 `_resolve_key_path()`와 동일한 "디렉토리면 내부 key 파일 사용" 로직을 인라인으로 중복 구현하던 것을 `_resolve_key_path()` 재사용으로 통합
+  - `decrypt()`의 `except (InvalidToken, Exception):`을 `except Exception:`으로 정리 — `InvalidToken`은 이미 `Exception`의 서브클래스라 의미 없는 중복이었음, 미사용 `InvalidToken` import 제거
+
+### 수정
+- **다운로드 경로의 `주차` 없는 강의 기본 디렉토리 오류 수정** (`src/downloader/video_downloader.py`)
+  - 원인: `make_filepath()`의 `_sanitize_filename(week_label or "") or "기타"`에서 `_sanitize_filename()`이 빈 입력에도 항상 `"lecture"`를 반환해 `"기타"` 폴백 분기가 도달 불가능한 죽은 코드였음
+  - `week_label`이 비어 있을 때만 `"기타"`를 사용하도록 조건을 명시적으로 분리
+
+### 추가
+- **순수 함수 단위 테스트 추가** (`tests/test_video_downloader.py`, `tests/test_background_player.py`)
+  - `_sanitize_filename`/`make_filepath`(경로 sanitize, 상위 디렉토리 순회 방지, 주차 추출, 빈 라벨 폴백) 및 `_parse_player_url`(duration sentinel 정규화, TargetUrl 디코딩) 커버
+
+---
+
 ## [v26.06.01] - 2026-06-01
 
 ### 수정

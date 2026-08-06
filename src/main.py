@@ -119,7 +119,7 @@ async def run():
 
         lec, action = result
         if action == LectureAction.PLAY:
-            success, has_error, user_cancelled = await run_player(scraper._page, lec, debug=False)
+            success, has_error, user_cancelled = await run_player(scraper.page, lec, debug=False)
             if success:
                 lec.completion = "completed"
                 _tg_notify_playback_complete(selected.long_name, lec)
@@ -130,7 +130,7 @@ async def run():
             rule = Config.DOWNLOAD_RULE or "both"
             audio_only = rule == "audio"
             both = rule == "both"
-            await run_download(scraper._page, lec, selected, audio_only=audio_only, both=both)
+            await run_download(scraper.page, lec, selected, audio_only=audio_only, both=both)
             input("\n  Enter를 눌러 계속...")
 
     await scraper.close()

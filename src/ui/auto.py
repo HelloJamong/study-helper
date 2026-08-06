@@ -270,7 +270,7 @@ async def run_auto_mode(scraper, courses, details) -> None:
                     playing_event.clear()
                     # 강의 완료 후 페이지 초기화 — Chromium 렌더러 메모리 해제
                     try:
-                        await scraper._page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+                        await scraper.page.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
                     except Exception:
                         pass
 
@@ -327,7 +327,7 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> b
     # ── 재생 ──────────────────────────────────────────────────────
     console.print("  [dim]  → 재생 중...[/dim]")
     try:
-        success, has_error, user_cancelled = await run_player(scraper._page, lec)
+        success, has_error, user_cancelled = await run_player(scraper.page, lec)
         if not success:
             if user_cancelled:
                 console.print(f"  [yellow]  → 사용자 중단: {label}[/yellow]")
@@ -352,7 +352,7 @@ async def _process_lecture(scraper, course, lec, stop_event: asyncio.Event) -> b
     both = rule == "both"
     console.print("  [dim]  → 다운로드 중...[/dim]")
     try:
-        ok = await run_download(scraper._page, lec, course, audio_only=audio_only, both=both)
+        ok = await run_download(scraper.page, lec, course, audio_only=audio_only, both=both)
         if not ok:
             console.print(f"  [yellow]  → 다운로드 실패: {label}[/yellow]")
             # run_download 내부에서 이미 텔레그램 알림 처리됨
