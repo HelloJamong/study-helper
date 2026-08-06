@@ -13,11 +13,34 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from src.config import Config
-from src.summarizer.summarizer import GEMINI_DEFAULT_MODEL, GEMINI_MODEL_IDS, GEMINI_MODEL_LABELS
+from src.summarizer.summarizer import (
+    GEMINI_DEFAULT_MODEL,
+    GEMINI_MODEL_IDS,
+    GEMINI_MODEL_LABELS,
+    OPENAI_DEFAULT_MODEL,
+    OPENAI_MODEL_IDS,
+    OPENAI_MODEL_LABELS,
+    OPENROUTER_DEFAULT_MODEL,
+)
 
 console = Console()
 
 _WHISPER_MODELS = ["tiny", "base", "small", "medium", "large"]
+
+_AI_AGENTS = [
+    ("gemini", "Gemini  (무료 티어 지원, 권장)"),
+    ("openai", "OpenAI  (유료)"),
+    ("openrouter", "OpenRouter  (다양한 모델, 일부 무료)"),
+]
+_AI_AGENT_IDS = [a[0] for a in _AI_AGENTS]
+_AI_AGENT_LABELS = [a[1] for a in _AI_AGENTS]
+
+# 에이전트별 API 키 안내 문구, 기존 키/모델 조회용 콜백
+_AI_KEY_INFO = {
+    "gemini": ("Gemini API 키", "Google AI Studio에서 무료로 발급 가능합니다."),
+    "openai": ("OpenAI API 키", "platform.openai.com에서 발급 가능합니다."),
+    "openrouter": ("OpenRouter API 키", "openrouter.ai에서 발급 가능하며, 일부 모델은 무료로 사용할 수 있습니다."),
+}
 
 
 def run_settings() -> None:
@@ -113,23 +136,46 @@ def run_settings() -> None:
     # ── 3. AI 요약 ───────────────────────────────────────────────
     _print_section("3. AI 요약")
     console.print("  [dim]STT로 변환된 텍스트를 AI로 자동 요약합니다.[/dim]")
-    console.print("  [dim]현재 Gemini API를 지원합니다 (무료 티어 사용 가능).[/dim]")
+    console.print("  [dim]Gemini / OpenAI / OpenRouter API를 지원합니다.[/dim]")
     console.print()
     _ai_default = "y" if Config.AI_ENABLED == "true" else "n"
     ai_choice = Prompt.ask("  AI 요약 사용", choices=["y", "n"], default=_ai_default, show_choices=True)
     ai_enabled = ai_choice == "y"
     console.print()
 
-    ai_agent = "gemini"
+    ai_agent = Config.AI_AGENT or "gemini"
+    if ai_agent not in _AI_AGENT_IDS:
+        ai_agent = "gemini"
     api_key = ""
-    gemini_model = Config.GEMINI_MODEL or GEMINI_DEFAULT_MODEL
+    ai_model = ""
     summary_prompt_extra = Config.SUMMARY_PROMPT_EXTRA
 
     if ai_enabled:
-        # 3.1. Gemini API 키
-        _print_section("3.1. Gemini API 키 입력")
-        console.print("  [dim]Google AI Studio에서 무료로 발급 가능합니다.[/dim]")
-        _existing_key = Config.GOOGLE_API_KEY
+        # 3.1. AI 에이전트 선택
+        _print_section("3.1. AI 에이전트 선택")
+        for i, label in enumerate(_AI_AGENT_LABELS, 1):
+            console.print(f"  [bold]{i}.[/bold] {label}")
+        console.print()
+        _agent_default = str(_AI_AGENT_IDS.index(ai_agent) + 1)
+        agent_choice = Prompt.ask(
+            "  선택",
+            choices=[str(i) for i in range(1, len(_AI_AGENT_IDS) + 1)],
+            default=_agent_default,
+            show_choices=False,
+        )
+        ai_agent = _AI_AGENT_IDS[int(agent_choice) - 1]
+        console.print()
+
+        # 3.2. API 키 입력
+        key_label, key_hint = _AI_KEY_INFO[ai_agent]
+        _existing_key = {
+            "gemini": Config.GOOGLE_API_KEY,
+            "openai": Config.OPENAI_API_KEY,
+            "openrouter": Config.OPENROUTER_API_KEY,
+        }[ai_agent]
+
+        _print_section(f"3.2. {key_label} 입력")
+        console.print(f"  [dim]{key_hint}[/dim]")
         if _existing_key:
             console.print(f"  [dim]현재 키: {_existing_key[:8]}{'*' * 20}[/dim]")
             console.print("  [dim]변경하지 않으려면 Enter를 누르세요.[/dim]")
@@ -141,29 +187,61 @@ def run_settings() -> None:
 
         # API 키가 있을 때만 모델/프롬프트 선택
         if api_key:
-            # 3.2. Gemini 모델 선택
-            _print_section("3.2. Gemini 모델 선택")
-            console.print("  [dim]무료 티어 모델 사용 권장 (기본값: gemini-2.5-flash)[/dim]")
-            console.print()
-            for i, label in enumerate(GEMINI_MODEL_LABELS, 1):
-                console.print(f"  [bold]{i}.[/bold] {label}")
+            _current_model = {
+                "gemini": Config.GEMINI_MODEL,
+                "openai": Config.OPENAI_MODEL,
+                "openrouter": Config.OPENROUTER_MODEL,
+            }[ai_agent]
+
+            # 3.3. 모델 선택
+            if ai_agent == "gemini":
+                _print_section("3.3. Gemini 모델 선택")
+                console.print("  [dim]무료 티어 모델 사용 권장 (기본값: gemini-2.5-flash)[/dim]")
+                console.print()
+                for i, label in enumerate(GEMINI_MODEL_LABELS, 1):
+                    console.print(f"  [bold]{i}.[/bold] {label}")
+                console.print()
+                _default_model = _current_model or GEMINI_DEFAULT_MODEL
+                _model_default = (
+                    str(GEMINI_MODEL_IDS.index(_default_model) + 1) if _default_model in GEMINI_MODEL_IDS else "1"
+                )
+                model_choice = Prompt.ask(
+                    "  모델 선택",
+                    choices=[str(i) for i in range(1, len(GEMINI_MODEL_IDS) + 1)],
+                    default=_model_default,
+                    show_choices=False,
+                )
+                ai_model = GEMINI_MODEL_IDS[int(model_choice) - 1]
+            elif ai_agent == "openai":
+                _print_section("3.3. OpenAI 모델 선택")
+                console.print()
+                for i, label in enumerate(OPENAI_MODEL_LABELS, 1):
+                    console.print(f"  [bold]{i}.[/bold] {label}")
+                console.print()
+                _default_model = _current_model or OPENAI_DEFAULT_MODEL
+                _model_default = (
+                    str(OPENAI_MODEL_IDS.index(_default_model) + 1) if _default_model in OPENAI_MODEL_IDS else "1"
+                )
+                model_choice = Prompt.ask(
+                    "  모델 선택",
+                    choices=[str(i) for i in range(1, len(OPENAI_MODEL_IDS) + 1)],
+                    default=_model_default,
+                    show_choices=False,
+                )
+                ai_model = OPENAI_MODEL_IDS[int(model_choice) - 1]
+            else:  # openrouter — 모델이 수백 개라 목록 대신 직접 입력받는다
+                _print_section("3.3. OpenRouter 모델 입력")
+                console.print("  [dim]openrouter.ai/models 에서 모델 ID를 확인할 수 있습니다.[/dim]")
+                console.print(f"  [dim]예: {OPENROUTER_DEFAULT_MODEL} (유료), meta-llama/llama-3.1-8b-instruct:free[/dim]")
+                _default_model = _current_model or OPENROUTER_DEFAULT_MODEL
+                console.print(f"  [dim]현재값: {_default_model}[/dim]")
+                console.print()
+                raw_model = Prompt.ask("  모델 ID", default="").strip()
+                ai_model = raw_model if raw_model else _default_model
             console.print()
 
-            _current_model = Config.GEMINI_MODEL or GEMINI_DEFAULT_MODEL
-            _model_default = (
-                str(GEMINI_MODEL_IDS.index(_current_model) + 1) if _current_model in GEMINI_MODEL_IDS else "1"
-            )
-            model_choice = Prompt.ask(
-                "  모델 선택",
-                choices=[str(i) for i in range(1, len(GEMINI_MODEL_IDS) + 1)],
-                default=_model_default,
-                show_choices=False,
-            )
-            gemini_model = GEMINI_MODEL_IDS[int(model_choice) - 1]
-            console.print()
-
-            # 3.3. 추가 요약 지시사항
-            _print_section("3.3. 추가 요약 지시사항")
+            # 3.4. 추가 요약 지시사항
+            _print_section("3.4. 추가 요약 지시사항")
             console.print("  [dim]기본 요약 형식에 추가할 지시사항을 입력하세요.[/dim]")
             console.print("  [dim]예: '영어 용어는 원문 그대로 표기해줘', '코드 예시도 포함해줘'[/dim]")
             if Config.SUMMARY_PROMPT_EXTRA:
@@ -247,7 +325,7 @@ def run_settings() -> None:
         ai_enabled=ai_enabled,
         ai_agent=ai_agent,
         api_key=api_key,
-        gemini_model=gemini_model,
+        ai_model=ai_model,
         summary_prompt_extra=summary_prompt_extra,
     )
     Config.save_telegram(
@@ -260,7 +338,13 @@ def run_settings() -> None:
     console.print("  [bold green]설정이 저장되었습니다.[/bold green]")
     console.print()
     _print_summary(
-        download_dir, download_rule, stt_enabled, ai_enabled, gemini_model if ai_enabled and api_key else "", tg_enabled
+        download_dir,
+        download_rule,
+        stt_enabled,
+        ai_enabled,
+        ai_agent if ai_enabled and api_key else "",
+        ai_model if ai_enabled and api_key else "",
+        tg_enabled,
     )
     console.print()
     Prompt.ask("  [dim]Enter를 눌러 계속[/dim]", default="")
@@ -276,7 +360,8 @@ def _print_summary(
     download_rule: str,
     stt_enabled: bool,
     ai_enabled: bool,
-    gemini_model: str,
+    ai_agent: str,
+    ai_model: str,
     tg_enabled: bool = False,
 ) -> None:
     """설정 요약을 표시한다."""
@@ -289,7 +374,7 @@ def _print_summary(
     if download_rule != "video":
         console.print(f"  STT 변환      : [cyan]{'사용' if stt_enabled else '미사용'}[/cyan]")
     console.print(f"  AI 요약       : [cyan]{'사용' if ai_enabled else '미사용'}[/cyan]")
-    if ai_enabled and gemini_model:
-        console.print(f"  Gemini 모델   : [cyan]{gemini_model}[/cyan]")
+    if ai_enabled and ai_model:
+        console.print(f"  AI 모델       : [cyan]{ai_agent} / {ai_model}[/cyan]")
     console.print(f"  텔레그램 알림  : [cyan]{'사용' if tg_enabled else '미사용'}[/cyan]")
     console.print("  [dim]─────────────────────────────[/dim]")

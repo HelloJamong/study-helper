@@ -32,7 +32,8 @@ torch는 `pyproject.toml`에 포함하지 않음 — Dockerfile에서 CPU wheel�
 
 ## 설계 의도
 
-- **기본 엔진**: STT는 Whisper(로컬, base 모델), 요약은 Gemini API. 키는 `.env`에서 로드.
+- **기본 엔진**: STT는 Whisper(로컬, base 모델), 요약은 Gemini / OpenAI / OpenRouter API 중 선택. 키는 `.env`에서 로드.
+  - OpenRouter는 OpenAI 호환 API이므로 `openai` 패키지에 `base_url`만 다르게 지정해 재사용(`src/summarizer/summarizer.py`).
 - **다운로드 경로**: 컨테이너 내 `/data/downloads/` — 볼륨 마운트로 호스트 접근.
 - **출력 파일**: mp4(영상), mp3(음성, ffmpeg 변환), txt(STT 결과), `_summarized.txt`(요약).
 - **백그라운드 재생**: video DOM 폴링(Plan A) + 진도 API 직접 호출(Plan B) 두 방식으로 구현. Plan A 실패 시 자동으로 Plan B로 전환.
@@ -105,10 +106,13 @@ WHISPER_MODEL=base     # tiny / base / small / medium / large
 
 # AI 요약 설정
 AI_ENABLED=            # true / false
-AI_AGENT=              # gemini / openai
+AI_AGENT=              # gemini / openai / openrouter
 GEMINI_MODEL=          # gemini-2.5-flash 등
+OPENAI_MODEL=          # gpt-4o-mini 등
+OPENROUTER_MODEL=      # openai/gpt-4o-mini 등 (openrouter.ai/models)
 GOOGLE_API_KEY=
 OPENAI_API_KEY=
+OPENROUTER_API_KEY=
 ```
 
 ## Git 커밋 규칙

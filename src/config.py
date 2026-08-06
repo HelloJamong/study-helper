@@ -2,6 +2,7 @@ import os
 import sys
 from datetime import timedelta, timezone
 from pathlib import Path
+from typing import ClassVar
 
 from dotenv import load_dotenv
 
@@ -68,6 +69,7 @@ class Config:
     LMS_PASSWORD: str = _load_credential("LMS_PASSWORD")
     GOOGLE_API_KEY: str = _load_credential("GOOGLE_API_KEY")
     OPENAI_API_KEY: str = _load_credential("OPENAI_API_KEY")
+    OPENROUTER_API_KEY: str = _load_credential("OPENROUTER_API_KEY")
     WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")
     # STT 언어: ko, en, 빈 문자열(자동 감지)
     STT_LANGUAGE: str = os.getenv("STT_LANGUAGE", "ko")
@@ -78,10 +80,14 @@ class Config:
     STT_ENABLED: str = os.getenv("STT_ENABLED", "")
     # AI 요약 사용 여부: true / false
     AI_ENABLED: str = os.getenv("AI_ENABLED", "")
-    # AI 에이전트 종류: gemini / openai
+    # AI 에이전트 종류: gemini / openai / openrouter
     AI_AGENT: str = os.getenv("AI_AGENT", "")
     # Gemini 모델 ID
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "")
+    # OpenAI 모델 ID
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "")
+    # OpenRouter 모델 ID (예: openai/gpt-4o-mini)
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "")
     # 요약 프롬프트 추가 지시사항
     SUMMARY_PROMPT_EXTRA: str = os.getenv("SUMMARY_PROMPT_EXTRA", "")
     # 텔레그램 봇 연동
@@ -101,6 +107,30 @@ class Config:
         return cls.TELEGRAM_BOT_TOKEN, cls.TELEGRAM_CHAT_ID
 
     @classmethod
+    def get_ai_credentials(cls) -> tuple[str, str, str] | None:
+        """AI 요약이 활성화 상태이고 API 키가 있으면 (agent, api_key, model)을 반환한다."""
+        if cls.AI_ENABLED != "true":
+            return None
+        agent = cls.AI_AGENT or "gemini"
+        api_key = {
+            "gemini": cls.GOOGLE_API_KEY,
+            "openai": cls.OPENAI_API_KEY,
+            "openrouter": cls.OPENROUTER_API_KEY,
+        }.get(agent, "")
+        if not api_key:
+            return None
+        model = {
+            "gemini": cls.GEMINI_MODEL,
+            "openai": cls.OPENAI_MODEL,
+            "openrouter": cls.OPENROUTER_MODEL,
+        }.get(agent, "")
+        if not model:
+            from src.summarizer.summarizer import AI_DEFAULT_MODELS
+
+            model = AI_DEFAULT_MODELS.get(agent, "")
+        return agent, api_key, model
+
+    @classmethod
     def has_credentials(cls) -> bool:
         return bool(cls.LMS_USER_ID and cls.LMS_PASSWORD)
 
@@ -114,6 +144,18 @@ class Config:
         """저장된 경로가 없으면 OS 기본 다운로드 폴더를 반환한다."""
         return cls.DOWNLOAD_DIR or _default_download_dir()
 
+    # 에이전트별 모델/API 키 저장 위치 (.env 키 이름)
+    _AI_MODEL_ENV_KEYS: ClassVar[dict[str, str]] = {
+        "gemini": "GEMINI_MODEL",
+        "openai": "OPENAI_MODEL",
+        "openrouter": "OPENROUTER_MODEL",
+    }
+    _AI_CREDENTIAL_ENV_KEYS: ClassVar[dict[str, str]] = {
+        "gemini": "GOOGLE_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }
+
     @classmethod
     def save_settings(
         cls,
@@ -123,7 +165,7 @@ class Config:
         ai_enabled: bool,
         ai_agent: str,
         api_key: str,
-        gemini_model: str = "",
+        ai_model: str = "",
         summary_prompt_extra: str = "",
     ) -> None:
         """설정 항목을 .env 파일에 저장한다."""
@@ -133,13 +175,6 @@ class Config:
         cls.AI_ENABLED = "true" if ai_enabled else "false"
         cls.AI_AGENT = ai_agent
         cls.SUMMARY_PROMPT_EXTRA = summary_prompt_extra
-        if gemini_model:
-            cls.GEMINI_MODEL = gemini_model
-        # API 키는 선택한 에이전트에 맞게 저장
-        if ai_enabled and ai_agent == "gemini":
-            cls.GOOGLE_API_KEY = api_key
-        elif ai_enabled and ai_agent == "openai":
-            cls.OPENAI_API_KEY = api_key
 
         to_save: dict = {
             "DOWNLOAD_DIR": download_dir,
@@ -149,12 +184,18 @@ class Config:
             "AI_AGENT": ai_agent,
             "SUMMARY_PROMPT_EXTRA": summary_prompt_extra,
         }
-        if gemini_model:
-            to_save["GEMINI_MODEL"] = gemini_model
-        if ai_enabled and ai_agent == "gemini":
-            to_save["GOOGLE_API_KEY"] = encrypt(api_key) if api_key else ""
-        elif ai_enabled and ai_agent == "openai":
-            to_save["OPENAI_API_KEY"] = encrypt(api_key) if api_key else ""
+
+        # 모델/API 키는 선택한 에이전트에 맞는 .env 키에만 저장
+        if ai_enabled and ai_agent in cls._AI_MODEL_ENV_KEYS:
+            if ai_model:
+                model_key = cls._AI_MODEL_ENV_KEYS[ai_agent]
+                setattr(cls, model_key, ai_model)
+                to_save[model_key] = ai_model
+
+            cred_key = cls._AI_CREDENTIAL_ENV_KEYS[ai_agent]
+            setattr(cls, cred_key, api_key)
+            to_save[cred_key] = encrypt(api_key) if api_key else ""
+
         cls._save_env(to_save)
 
     @classmethod

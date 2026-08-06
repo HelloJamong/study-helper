@@ -49,9 +49,32 @@ def test_summarize_openai_path(tmp_path):
     """OpenAI 에이전트 경로도 동작해야 한다."""
     txt = tmp_path / "lecture.txt"
     txt.write_text("강의 내용입니다.", encoding="utf-8")
-    with patch("src.summarizer.summarizer._summarize_openai", return_value="OpenAI 요약"):
+    with patch("src.summarizer.summarizer._summarize_openai_compatible", return_value="OpenAI 요약") as mock_fn:
         from src.summarizer.summarizer import summarize
 
         result = summarize(txt, agent="openai", api_key="key", model="gpt-4")
         assert result.name == "lecture_summarized.txt"
         assert result.read_text(encoding="utf-8") == "OpenAI 요약"
+        # base_url 없이 호출돼야 한다 (OpenAI 정식 엔드포인트 사용)
+        assert mock_fn.call_args.args[:2] == ("key", "gpt-4")
+        assert "base_url" not in mock_fn.call_args.kwargs
+
+
+def test_summarize_openrouter_path(tmp_path):
+    """OpenRouter 에이전트는 OpenAI 호환 경로를 OpenRouter base_url로 호출해야 한다."""
+    txt = tmp_path / "lecture.txt"
+    txt.write_text("강의 내용입니다.", encoding="utf-8")
+    with patch("src.summarizer.summarizer._summarize_openai_compatible", return_value="OpenRouter 요약") as mock_fn:
+        from src.summarizer.summarizer import OPENROUTER_BASE_URL, summarize
+
+        result = summarize(txt, agent="openrouter", api_key="key", model="openai/gpt-4o-mini")
+        assert result.read_text(encoding="utf-8") == "OpenRouter 요약"
+        assert mock_fn.call_args.kwargs["base_url"] == OPENROUTER_BASE_URL
+
+
+def test_ai_default_models_cover_all_agents():
+    """AI_DEFAULT_MODELS가 gemini/openai/openrouter 모두를 커버해야 한다."""
+    from src.summarizer.summarizer import AI_DEFAULT_MODELS
+
+    assert set(AI_DEFAULT_MODELS) == {"gemini", "openai", "openrouter"}
+    assert all(AI_DEFAULT_MODELS.values())

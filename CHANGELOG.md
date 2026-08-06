@@ -1,5 +1,33 @@
 # Changelog
 
+## [v26.8.0] - 2026-08-06
+
+### 추가
+- **OpenRouter API 지원 추가** (`src/summarizer/summarizer.py`, `src/config.py`, `src/ui/settings.py`)
+  - OpenRouter는 OpenAI 호환 API이므로 기존 `openai` 패키지에 `base_url`만 다르게 지정해 재사용 — 신규 의존성 없음
+  - OpenRouter는 모델이 수백 개라 Gemini/OpenAI처럼 목록에서 고르는 대신 모델 ID를 직접 입력받음 (`openrouter.ai/models` 안내)
+- **OpenAI 모델 curated 목록 추가** (`src/summarizer/summarizer.py`)
+  - `OPENAI_MODEL_IDS`(gpt-4o-mini/gpt-4o/gpt-4.1-mini/o4-mini)를 Gemini와 동일한 방식으로 설정 화면에 노출
+- **설정 화면에 AI 에이전트 선택 단계 추가** (`src/ui/settings.py`)
+  - AI 요약 활성화 시 Gemini/OpenAI/OpenRouter 중 에이전트를 먼저 선택한 뒤, 선택한 에이전트에 맞는 API 키·모델 입력 화면으로 분기
+- **README 러시아어 번역본 제공** (`README.md`, `README-ko.md`)
+  - 기존 한국어 README를 `README-ko.md`로 이동하고 `README.md`를 러시아어 번역본으로 신규 작성
+  - 두 문서 최상단에 언어 전환 링크 추가 (TUI 화면 예시는 실제 인터페이스와 동일하게 한국어 원문 유지)
+
+### 수정
+- **OpenAI 요약 시 Gemini 모델로 강제 호출되던 버그 수정** (`src/ui/download.py`)
+  - 원인: `model = Config.GEMINI_MODEL if Config.AI_AGENT == "gemini" else ""`가 OpenAI 선택 시 항상 빈 문자열을 반환했고, 이어지는 `model or GEMINI_DEFAULT_MODEL` 폴백이 Gemini 기본 모델(`gemini-2.5-flash`)을 채워 OpenAI API에 존재하지 않는 모델명으로 요청이 전송됨
+  - 게다가 설정 화면(`ui/settings.py`)에 OpenAI를 선택하는 경로 자체가 없어 `.env`를 직접 편집해야만 `AI_AGENT=openai`를 쓸 수 있었음 — 사실상 미완성 기능이었음
+  - `Config.get_ai_credentials()`로 에이전트별 (api_key, model) 조회 로직을 일원화해 `ui/download.py`·`ui/auto.py`에 중복돼 있던 2-way 삼항연산을 제거
+
+### 변경
+- **`Config.save_settings()` 3-에이전트 대응으로 일반화** (`src/config.py`)
+  - `gemini_model` 파라미터를 `ai_model`로 일반화하고, 선택된 에이전트에 대응하는 `.env` 키(`GEMINI_MODEL`/`OPENAI_MODEL`/`OPENROUTER_MODEL`, `GOOGLE_API_KEY`/`OPENAI_API_KEY`/`OPENROUTER_API_KEY`)에만 저장하도록 변경
+- **Gemini API 키 발급 가이드 문서 제거** (`docs/gemini-api-key.md`, `README-ko.md`)
+  - 가이드 문서와 README의 참조 링크 2곳 삭제
+
+---
+
 ## [v26.7.0] - 2026-08-06
 
 ### 변경

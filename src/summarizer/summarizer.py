@@ -1,7 +1,7 @@
 """
 AI 요약기.
 
-STT로 생성된 .txt 파일을 Gemini 또는 OpenAI API로 요약한다.
+STT로 생성된 .txt 파일을 Gemini, OpenAI 또는 OpenRouter API로 요약한다.
 결과는 동일 경로에 _summarized.txt로 저장된다.
 """
 
@@ -74,6 +74,26 @@ GEMINI_MODEL_IDS = [m[0] for m in _GEMINI_MODELS]
 GEMINI_MODEL_LABELS = [m[1] for m in _GEMINI_MODELS]
 GEMINI_DEFAULT_MODEL = GEMINI_MODEL_IDS[0]
 
+_OPENAI_MODELS = [
+    ("gpt-4o-mini", "GPT-4o mini  (저렴, 권장)"),
+    ("gpt-4o", "GPT-4o"),
+    ("gpt-4.1-mini", "GPT-4.1 mini"),
+    ("o4-mini", "o4-mini  (추론 특화)"),
+]
+OPENAI_MODEL_IDS = [m[0] for m in _OPENAI_MODELS]
+OPENAI_MODEL_LABELS = [m[1] for m in _OPENAI_MODELS]
+OPENAI_DEFAULT_MODEL = OPENAI_MODEL_IDS[0]
+
+# OpenRouter는 수백 개의 모델을 제공하므로 고정 목록 대신 자유 입력을 받는다.
+OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+AI_DEFAULT_MODELS = {
+    "gemini": GEMINI_DEFAULT_MODEL,
+    "openai": OPENAI_DEFAULT_MODEL,
+    "openrouter": OPENROUTER_DEFAULT_MODEL,
+}
+
 
 def summarize(
     txt_path: Path, agent: str, api_key: str, model: str, extra_prompt: str = "", course_name: str = ""
@@ -83,7 +103,7 @@ def summarize(
 
     Args:
         txt_path:     STT 결과 .txt 파일 경로
-        agent:        "gemini" 또는 "openai"
+        agent:        "gemini", "openai" 또는 "openrouter"
         api_key:      해당 에이전트 API 키
         model:        사용할 모델 ID
         extra_prompt: 사용자 추가 지시사항 (기본 프롬프트 뒤에 추가)
@@ -105,7 +125,9 @@ def summarize(
     if agent == "gemini":
         summary = _summarize_gemini(api_key, model, prompt)
     elif agent == "openai":
-        summary = _summarize_openai(api_key, model, prompt)
+        summary = _summarize_openai_compatible(api_key, model, prompt)
+    elif agent == "openrouter":
+        summary = _summarize_openai_compatible(api_key, model, prompt, base_url=OPENROUTER_BASE_URL)
     else:
         raise ValueError(f"지원하지 않는 AI 에이전트: {agent}")
 
@@ -132,13 +154,14 @@ def _summarize_gemini(api_key: str, model: str, prompt: str) -> str:
     return response.text
 
 
-def _summarize_openai(api_key: str, model: str, prompt: str) -> str:
+def _summarize_openai_compatible(api_key: str, model: str, prompt: str, base_url: str | None = None) -> str:
+    """OpenAI 및 OpenAI 호환 API(OpenRouter 등)를 처리한다."""
     try:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai 패키지가 설치되어 있지 않습니다.\n설치: pip install openai") from None
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
